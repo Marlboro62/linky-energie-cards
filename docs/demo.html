@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cartes Linky Énergie · démo</title>
+<meta name="description" content="Démonstration des cinq cartes Lovelace Cartes Linky Énergie (puissance, facture, postes Tempo, prix Tempo, contrôle du cycle) avec des données simulées.">
+<style>
+  :root {
+    --bg: #0f1724; --panel: #172133; --line: #2a3850; --text: #e7edf5; --muted: #8fa0b8;
+    --accent: #96d21f; --accent2: #1d93e3; --btn: #1e2a3f; --btn-on: #2b3d5c;
+    /* Variables lues par les cartes en mode « Thème Home Assistant » */
+    --card-background-color: #1c1c1c; --primary-text-color: #e1e1e1;
+    --secondary-text-color: #9b9b9b; --divider-color: rgba(225, 225, 225, .12);
+    --ha-card-border-radius: 12px;
+    color-scheme: dark;
+  }
+  :root[data-theme="light"] {
+    --bg: #eef2f7; --panel: #ffffff; --line: #d6dde8; --text: #1b2433; --muted: #5b6b82;
+    --accent: #4c8a0b; --accent2: #1673b8; --btn: #f2f5f9; --btn-on: #dde7f5;
+    --card-background-color: #ffffff; --primary-text-color: #212121;
+    --secondary-text-color: #727272; --divider-color: rgba(0, 0, 0, .12);
+    color-scheme: light;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  a { color: var(--accent2); }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 28px 16px 48px; }
+  .top { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 22px; }
+  .top svg { width: 44px; height: 44px; fill: none; flex: none; }
+  .top .house { stroke: var(--accent); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+  .top .bolt { fill: var(--accent2); }
+  h1 { font-size: 1.5rem; margin: 0; line-height: 1.2; }
+  .lead { margin: 2px 0 0; color: var(--muted); }
+  .badge { display: inline-block; margin-left: 6px; padding: 1px 8px; border-radius: 999px; font-size: .75rem;
+    font-weight: 600; background: var(--btn-on); color: var(--text); vertical-align: middle; }
+  .links { margin-left: auto; display: flex; gap: 14px; font-size: .9rem; }
+
+  .grid { display: grid; grid-template-columns: 340px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } .links { margin-left: 0; } .stage { order: -1; } }
+
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 16px; padding: 16px; }
+  .panel h2 { font-size: .8rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 0 0 10px; }
+  .panel h2 + .ctl { margin-top: 0; }
+  .panel h2:not(:first-child) { margin-top: 18px; }
+  .ctl { margin-bottom: 14px; }
+  .ctl:last-child { margin-bottom: 0; }
+  .ctl-l { font-size: .85rem; margin-bottom: 6px; }
+  .seg { display: flex; flex-wrap: wrap; gap: 6px; }
+  .seg button { font: inherit; font-size: .82rem; padding: 5px 11px; border-radius: 999px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--btn); color: var(--text); }
+  .seg button[aria-pressed="true"] { background: var(--btn-on); border-color: var(--accent2); font-weight: 600; }
+  .seg button:focus-visible { outline: 2px solid var(--accent2); outline-offset: 2px; }
+  .seg .sw { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 0; }
+  .sw.blue { background: #3f7ff0; } .sw.white { background: #e9eef4; box-shadow: inset 0 0 0 1px #9aa6b6; }
+  .sw.red { background: #ee4a4a; } .sw.green { background: #5fcf8a; } .sw.orange { background: #f0a33a; }
+
+  .stage { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .frame { margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 12px; transition: max-width .25s ease; }
+  .frame[data-width="mobile"] { max-width: 440px; }
+  .frame[data-width="large"] { max-width: 760px; }
+  .hint { font-size: .82rem; color: var(--muted); text-align: center; margin: 0; }
+
+  pre { margin: 0; padding: 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line);
+    font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; overflow-x: auto; white-space: pre; }
+  .yaml-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+  .yaml-h h2 { margin: 0; }
+  .copy { font: inherit; font-size: .8rem; padding: 4px 10px; border-radius: 8px; cursor: pointer;
+    border: 1px solid var(--line); background: var(--btn); color: var(--text); }
+  [hidden] { display: none !important; }
+  .note { font-size: .82rem; color: var(--muted); margin: 18px 0 0; }
+  .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); padding: 10px 16px; border-radius: 10px;
+    background: var(--panel); border: 1px solid var(--accent2); font-size: .88rem; box-shadow: 0 6px 24px rgba(0,0,0,.3);
+    opacity: 0; pointer-events: none; transition: opacity .2s; max-width: calc(100% - 32px); }
+  .toast.on { opacity: 1; }
+  @media (prefers-reduced-motion: reduce) { .frame, .toast { transition: none; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <svg viewBox="0 0 32 32" aria-hidden="true"><path class="house" d="M4 14.5 16 4l12 10.5V27a1.5 1.5 0 0 1-1.5 1.5h-5M10.5 28.5h-5A1.5 1.5 0 0 1 4 27V14.5"/><path class="bolt" d="M17.5 9 11 18h4.5l-1.5 8 7-10h-4.6z"/></svg>
+    <div>
+      <h1>Cartes Linky Énergie <span class="badge" id="ver">démo</span></h1>
+      <p class="lead">Puissance, facture, postes Tempo, prix Tempo et contrôle du cycle · données simulées, sans Home Assistant</p>
+    </div>
+    <nav class="links">
+      <a href="https://github.com/Marlboro62/linky-energie-cards">Dépôt GitHub</a>
+      <a href="https://github.com/Marlboro62/linky-energie-cards#installation">Installation</a>
+    </nav>
+  </header>
+
+  <div class="grid">
+    <aside class="panel" aria-label="Réglages de la démo">
+      <h2>Carte</h2>
+      <div class="ctl"><div class="seg" data-key="card">
+        <button data-v="puissance">Puissance</button><button data-v="facture">Facture</button><button data-v="postes">Énergie par poste</button>
+        <button data-v="prix">Prix Tempo</button><button data-v="cycle">Contrôle du cycle</button><button data-v="all">Les 5</button></div></div>
+
+      <h2>Affichage</h2>
+      <div class="ctl"><div class="ctl-l">Page</div><div class="seg" data-key="page">
+        <button data-v="dark">Sombre</button><button data-v="light">Clair</button></div></div>
+      <div class="ctl"><div class="ctl-l">Couleurs des cartes (<code>theme</code>)</div><div class="seg" data-key="theme">
+        <button data-v="v2">MyElectricalData</button><button data-v="auto">MyElectricalData auto</button><button data-v="ha">Thème Home Assistant</button></div></div>
+      <div class="ctl"><div class="ctl-l">Largeur</div><div class="seg" data-key="width">
+        <button data-v="mobile">Téléphone</button><button data-v="large">Tablette / PC</button></div></div>
+
+      <h2>Situation simulée</h2>
+      <div class="ctl" data-for="puissance postes prix all"><div class="ctl-l">Poste Tempo en cours</div><div class="seg" data-key="poste">
+        <button data-v="HC BLEU"><i class="sw blue"></i>HC Bleu</button><button data-v="HP BLEU"><i class="sw blue"></i>HP Bleu</button>
+        <button data-v="HP BLANC"><i class="sw white"></i>HP Blanc</button><button data-v="HP ROUGE"><i class="sw red"></i>HP Rouge</button></div></div>
+      <div class="ctl" data-for="puissance all"><div class="ctl-l">Puissance appelée</div><div class="seg" data-key="load">
+        <button data-v="0.08">Veille</button><button data-v="0.42">Moyenne</button><button data-v="0.8">Forte</button><button data-v="1.03">Dépassement</button></div></div>
+      <div class="ctl" data-for="puissance all"><div class="ctl-l">Puissance souscrite</div><div class="seg" data-key="kva">
+        <button data-v="6">6 kVA</button><button data-v="9">9 kVA</button><button data-v="12">12 kVA</button></div></div>
+      <div class="ctl" data-for="facture all"><div class="ctl-l">Budget mensuel (<code>budget_month</code>)</div><div class="seg" data-key="budget">
+        <button data-v="none">Aucun</button><button data-v="60">60 €</button><button data-v="90">90 €</button></div></div>
+      <div class="ctl" data-for="postes"><div class="ctl-l">Onglet à l'ouverture (<code>period</code>)</div><div class="seg" data-key="period">
+        <button data-v="jour">Aujourd'hui</button><button data-v="mois">Ce mois</button><button data-v="cycle">Cycle</button></div></div>
+      <div class="ctl" data-for="prix all"><div class="ctl-l">Source des prix</div><div class="seg" data-key="prices">
+        <button data-v="ok"><i class="sw green"></i>Concordante</button><button data-v="diff"><i class="sw orange"></i>Écart</button><button data-v="off"><i class="sw red"></i>Indisponible</button></div></div>
+      <div class="ctl" data-for="cycle all"><div class="ctl-l">Compteurs du cycle</div><div class="seg" data-key="cycle">
+        <button data-v="ok"><i class="sw green"></i>Cohérents</button><button data-v="gap"><i class="sw orange"></i>Écart avec le mois</button><button data-v="zero"><i class="sw red"></i>Baseline à 0</button></div></div>
+    </aside>
+
+    <main class="stage">
+      <div class="frame" id="frame"></div>
+      <p class="hint">Les onglets et les boutons des cartes fonctionnent. Les scripts ne sont pas lancés : la démo l'indique seulement.</p>
+      <section class="panel">
+        <div class="yaml-h"><h2>Configuration</h2><button class="copy" id="copy">Copier</button></div>
+        <pre id="yaml"></pre>
+      </section>
+    </main>
+  </div>
+
+  <p class="note">Les chiffres sont simulés et ne correspondent à aucun compteur réel. Dans Home Assistant, les cartes
+    affichent vos propres capteurs (module TIC Lixee / ZLinky, compteurs Tempo par poste, capteurs de coût) : voir le
+    <a href="https://github.com/Marlboro62/linky-energie-cards#capteurs">README</a>.</p>
+</div>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<!-- Les cartes, telles qu'elles sont publiées dans le dépôt -->
+<script src="../linky-energie-cards.js"></script>
+<script>
+(() => {
+  "use strict";
+
+  /* Home Assistant fournit <ha-card> et <ha-icon> ; ici, de simples blocs suffisent. */
+  if (!customElements.get("ha-card")) {
+    customElements.define("ha-card", class extends HTMLElement {
+      constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML = "<style>:host{display:block}</style><slot></slot>"; }
+    });
+  }
+  if (!customElements.get("ha-icon")) customElements.define("ha-icon", class extends HTMLElement {});
+
+  const TYPES = {
+    puissance: "linky-puissance-card", facture: "linky-facture-card", postes: "linky-tempo-postes-card",
+    prix: "linky-tempo-prix-card", cycle: "linky-cycle-card",
+  };
+  const POSTES = ["bleu_hc", "bleu_hp", "blanc_hc", "blanc_hp", "rouge_hc", "rouge_hp"];
+  const EN = { bleu_hc: "blue_hc", bleu_hp: "blue_hp", blanc_hc: "white_hc", blanc_hp: "white_hp", rouge_hc: "red_hc", rouge_hp: "red_hp" };
+  const PRIX = { bleu_hc: 0.1356, bleu_hp: 0.1654, blanc_hc: 0.1536, blanc_hp: 0.1921, rouge_hc: 0.1615, rouge_hp: 0.7295 };
+  const ENERGIE = { // kWh : aujourd'hui, ce mois, cycle
+    bleu_hc: [4.6, 97.0, 97.0], bleu_hp: [5.9, 126.3, 126.3], blanc_hc: [0, 3.1, 3.1],
+    blanc_hp: [0, 6.4, 6.4], rouge_hc: [0, 0, 0], rouge_hp: [0, 0, 0],
+  };
+  const BASE = { bleu_hc: 13958.9, bleu_hp: 11875.1, blanc_hc: 1900.8, blanc_hp: 1138.0, rouge_hc: 446.6, rouge_hp: 484.2 };
+
+  const defaults = { card: "all", page: "dark", theme: "v2", width: "mobile", poste: "HP BLEU", load: "0.42", kva: "9",
+    budget: "none", period: "mois", prices: "ok", cycle: "ok" };
+  let state = { ...defaults };
+  try { state = { ...defaults, ...JSON.parse(localStorage.getItem("linky-energie-demo") || "{}") }; } catch (e) { /* ignoré */ }
+
+  const S = (v, unit, name, extra = {}) => ({ state: String(v), attributes: { unit_of_measurement: unit, friendly_name: name, ...extra }, last_changed: "demo" });
+
+  function buildStates() {
+    const kva = Number(state.kva);
+    const va = Math.round(kva * 1000 * Number(state.load));
+    const poste = state.poste.toLowerCase().split(" ").reverse().join("_"); // « HP BLEU » -> bleu_hp
+    const prix = PRIX[poste] ?? 0.1654;
+    const st = {
+      "sensor.lixee_sinsts": S(va, "VA", "Puissance apparente"),
+      "sensor.lixee_pref": S(kva, "kVA", "Puissance de référence"),
+      "sensor.lixee_current_price": S(state.poste, undefined, "Période tarifaire"),
+      "sensor.tempo_tarif_ttc_actuel": S(prix, "€/kWh", "Tarif TTC actuel"),
+      "sensor.tempo_total_instantane": S(((va / 1000) * prix).toFixed(3), "€/h", "Coût instantané"),
+      "binary_sensor.linky_depassement_puissance": S(Number(state.load) > 1 ? "on" : "off", undefined, "Dépassement de puissance"),
+      "sensor.linky_depassements_jour": S(Number(state.load) > 1 ? 2 : 0, undefined, "Dépassements du jour"),
+      "sensor.tempo_cout_total_cycle_en_cours": S(45.52, "€", "Coût total cycle"),
+      "sensor.tempo_cout_energie_cycle_en_cours": S(34.09, "€", "Coût énergie cycle"),
+      "sensor.tempo_cout_total_ce_mois": S(49.89, "€", "Coût total mois"),
+      "sensor.tempo_cout_energie_ce_mois": S(34.09, "€", "Coût énergie mois"),
+      "sensor.tempo_cout_total_aujourd_hui": S(2.18, "€", "Coût total aujourd'hui"),
+      "sensor.edf_estimation_mensuelle": S(71.4, "€", "Estimation mensuelle"),
+      "input_number.abonnement_mensuel_tempo": S(15.8, "€", "Abonnement mensuel"),
+      "sensor.conso_totale_cycle_en_cours": S(232.8, "kWh", "Énergie du cycle"),
+      "sensor.conso_cycle_precedent_archive": S(4066, "kWh", "Cycle précédent"),
+      "sensor.conso_totale_mensuelle": S(232.8, "kWh", "Énergie du mois"),
+      "sensor.tempo_consommation_totale_aujourd_hui": S(10.5, "kWh", "Énergie aujourd'hui"),
+      "sensor.tempo_controle_compteurs_actifs": S(1, undefined, "Compteurs actifs"),
+      "input_number.archive_conso_cycle_precedent": S(4066, "kWh", "Archive du cycle précédent"),
+      "script.tempo_recaler_cycle_01_10": S("off", undefined, "Tempo – recaler le cycle sur le 1er octobre", { icon: "mdi:calendar-sync" }),
+      "script.tempo_restaurer_compteurs": S("off", undefined, "Tempo – restaurer les compteurs depuis les baselines", { icon: "mdi:backup-restore" }),
+      "automation.tempo_alerte_baselines_perdues": S("on", undefined, "Tempo – alerte baselines perdues", { last_triggered: new Date(Date.now() - 2 * 86400e3).toISOString() }),
+      "automation.tempo_nouveau_cycle_de_facturation_1er_octobre": S("on", undefined, "Tempo – nouveau cycle de facturation (1er octobre)", { last_triggered: null }),
+    };
+    for (const k of POSTES) {
+      const [j, m, c] = ENERGIE[k];
+      st[`sensor.tempo_${k}_energie_aujourdhui`] = S(j, "kWh");
+      st[`sensor.tempo_${k}_energie_ce_mois`] = S(state.cycle === "gap" && k === "bleu_hp" ? (m + 10.3).toFixed(1) : m, "kWh");
+      st[`sensor.tempo_${k}_energie_cette_annee`] = S(c, "kWh");
+      st[`sensor.tempo_prix_${k}`] = S(PRIX[k], "€/kWh");
+      st[`input_number.tempo_tarif_${k}`] = S(PRIX[k], "€/kWh");
+      const med = state.prices === "off" ? "unavailable" : state.prices === "diff" && k.startsWith("bleu") ? (PRIX[k] - 0.006).toFixed(4) : PRIX[k];
+      st[`sensor.myelectricaldata_tempo_price_${EN[k]}`] = S(med, "€/kWh");
+      st[`input_number.baseline_${k}`] = S(state.cycle === "zero" && k === "blanc_hc" ? 0 : BASE[k], "kWh");
+      st[`sensor.conso_${k}_cycle_en_cours`] = S(c, "kWh");
+    }
+    return st;
+  }
+
+  function configs() {
+    const t = state.theme;
+    const c = {
+      puissance: { type: "custom:linky-puissance-card", theme: t },
+      facture: { type: "custom:linky-facture-card", theme: t, ...(state.budget !== "none" ? { budget_month: Number(state.budget) } : {}) },
+      postes: { type: "custom:linky-tempo-postes-card", theme: t, period: state.period },
+      prix: { type: "custom:linky-tempo-prix-card", theme: t },
+      cycle: { type: "custom:linky-cycle-card", theme: t },
+    };
+    return state.card === "all" ? Object.values(c) : [c[state.card]];
+  }
+
+  function yaml(list) {
+    const one = (c, pad) => Object.entries(c).map(([k, v], i) => `${i === 0 && pad ? "  - " : pad ? "    " : ""}${k}: ${v}`).join("\n");
+    return list.length === 1 ? one(list[0], false) : "type: vertical-stack\ncards:\n" + list.map((c) => one(c, true)).join("\n");
+  }
+
+  const frame = document.getElementById("frame");
+  const toast = document.getElementById("toast");
+  let toastTimer;
+  const hass = () => ({
+    states: buildStates(),
+    themes: { darkMode: state.page === "dark" },
+    language: "fr",
+    callService: (domain, service, data) => {
+      const id = data?.entity_id || "";
+      toast.textContent = `Démo : ${domain}.${service} sur ${id} (rien n'est lancé ici).`;
+      toast.classList.add("on");
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove("on"), 2600);
+    },
+    // Pic du jour : statistique « max » simulée
+    callWS: async (msg) => ({ [msg.statistic_ids[0]]: [{ start: Date.now() - 6 * 3600e3, max: Math.round(Number(state.kva) * 1000 * 0.71) }] }),
+  });
+
+  function render() {
+    document.documentElement.dataset.theme = state.page;
+    frame.dataset.width = state.width;
+    document.querySelectorAll(".seg").forEach((seg) => {
+      seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.v === state[seg.dataset.key])));
+    });
+    document.querySelectorAll("[data-for]").forEach((el) => { el.hidden = !el.dataset.for.split(" ").includes(state.card); });
+    const list = configs();
+    document.getElementById("yaml").textContent = yaml(list);
+    if (!list.every((c) => customElements.get(c.type.replace("custom:", "")))) return;
+    const key = list.map((c) => c.type).join();
+    if (frame.dataset.key !== key) {
+      frame.replaceChildren(...list.map((c) => document.createElement(c.type.replace("custom:", ""))));
+      frame.dataset.key = key;
+    }
+    const h = hass();
+    [...frame.children].forEach((el, i) => { el.setConfig(list[i]); el.hass = h; });
+  }
+
+  document.querySelectorAll(".seg").forEach((seg) => {
+    seg.addEventListener("click", (ev) => {
+      const b = ev.target.closest("button");
+      if (!b) return;
+      state[seg.dataset.key] = b.dataset.v;
+      try { localStorage.setItem("linky-energie-demo", JSON.stringify(state)); } catch (e) { /* ignoré */ }
+      render();
+    });
+  });
+
+  document.getElementById("copy").addEventListener("click", async (ev) => {
+    const txt = document.getElementById("yaml").textContent;
+    try { await navigator.clipboard.writeText(txt); ev.target.textContent = "Copié ✓"; }
+    catch (e) { ev.target.textContent = "Sélectionnez le texte"; }
+    setTimeout(() => { ev.target.textContent = "Copier"; }, 1600);
+  });
+
+  // Version affichée : celle du fichier chargé (lue dans la console d'enregistrement)
+  fetch("../linky-energie-cards.js").then((r) => r.text()).then((t) => {
+    const m = /CARD_VERSION = "([^"]+)"/.exec(t);
+    if (m) document.getElementById("ver").textContent = `v${m[1]} · démo`;
+  }).catch(() => {});
+
+  render();
+  Promise.all(Object.values(TYPES).map((t) => customElements.whenDefined(t))).then(render);
+})();
+</script>
+</body>
+</html>
