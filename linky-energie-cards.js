@@ -12,7 +12,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.1.0-beta";
+const CARD_VERSION = "0.1.1-beta";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -542,6 +542,9 @@ class LinkyCycleCard extends EnergyBase {
     cycle_suffix: "_cycle_en_cours",
     total: "sensor.conso_totale_cycle_en_cours",
     archive: "input_number.archive_conso_cycle_precedent",
+    cycle_start: "10-01",
+    month_prefix: "sensor.tempo_",
+    month_suffix: "_energie_ce_mois",
     scripts: ["script.tempo_nouveau_cycle", "script.tempo_recaler_cycle_01_10", "script.tempo_restaurer_compteurs"],
     automations: ["automation.tempo_alerte_baselines_perdues", "automation.tempo_nouveau_cycle_de_facturation_1er_octobre"],
     theme: "v2",
@@ -553,7 +556,7 @@ class LinkyCycleCard extends EnergyBase {
 
   _watch() {
     const c = this._config;
-    return [c.control, c.total, c.archive, ...POSTES.flatMap((p) => [`${c.baseline_prefix}${p.k}`, `${c.cycle_prefix}${p.k}${c.cycle_suffix}`]), ...(c.scripts || []), ...(c.automations || [])];
+    return [c.control, c.total, c.archive, ...POSTES.flatMap((p) => [`${c.baseline_prefix}${p.k}`, `${c.cycle_prefix}${p.k}${c.cycle_suffix}`, `${c.month_prefix}${p.k}${c.month_suffix}`]), ...(c.scripts || []), ...(c.automations || [])];
   }
 
   _content() {
@@ -564,18 +567,26 @@ class LinkyCycleCard extends EnergyBase {
     const zero = rows.filter((r) => r.b === 0).length;
     const missing = rows.filter((r) => r.b === null).length;
     const negative = rows.filter((r) => r.v !== null && r.v < 0).length;
-    const fewer = ctlNum !== null && ctlNum < POSTES.length;
-    const ok = !zero && !negative && !missing && !fewer;
+    // Pendant le premier mois du cycle (début le 1er), compteurs du cycle et du mois doivent être égaux.
+    const [cm, cd] = String(c.cycle_start || "10-01").split("-").map(Number);
+    const firstMonth = cd === 1 && new Date().getMonth() + 1 === cm;
+    for (const r of rows) {
+      r.m = firstMonth ? this._num(`${c.month_prefix}${r.p.k}${c.month_suffix}`) : null;
+      r.gap = r.m !== null && r.v !== null ? r.v - r.m : null;
+    }
+    const gaps = rows.filter((r) => r.gap !== null && Math.abs(r.gap) >= 0.5);
+    const ok = !zero && !negative && !missing && !gaps.length;
     const ctlTxt = ctl ? `${ctl.state}${ctl.attributes?.unit_of_measurement ? ` ${ctl.attributes.unit_of_measurement}` : ""}` : null;
 
     const table = `<table class="en-t">
-        <thead><tr><th>Poste</th><th>Baseline (index kWh)</th><th>Cycle en cours</th></tr></thead>
+        <thead><tr><th>Poste</th><th>Baseline (index kWh)</th><th>Cycle en cours</th>${firstMonth ? "<th>Ce mois</th>" : ""}</tr></thead>
         <tbody>${rows.map((r) => `<tr>
           <td><i class="sq s-${r.p.c} s-${r.p.h}"></i>${posteLabel(r.p)}</td>
           <td data-entity="${esc(r.bid)}" class="${r.b === 0 || r.b === null ? "bad" : ""}">${r.b !== null ? fmt(r.b, 1) : "—"}</td>
-          <td data-entity="${esc(r.vid)}" class="${r.v !== null && r.v < 0 ? "bad" : ""}">${kwhFmt(r.v)} kWh</td>
+          <td data-entity="${esc(r.vid)}" class="${(r.v !== null && r.v < 0) || (r.gap !== null && Math.abs(r.gap) >= 0.5) ? "bad" : ""}">${kwhFmt(r.v)} kWh</td>
+          ${firstMonth ? `<td data-entity="${esc(`${c.month_prefix}${r.p.k}${c.month_suffix}`)}">${kwhFmt(r.m)} kWh</td>` : ""}
         </tr>`).join("")}</tbody>
-        <tfoot><tr><td>Total</td><td></td><td data-entity="${esc(c.total)}">${kwhFmt(this._num(c.total))} kWh</td></tr></tfoot>
+        <tfoot><tr><td>Total</td><td></td><td data-entity="${esc(c.total)}">${kwhFmt(this._num(c.total))} kWh</td>${firstMonth ? `<td>${kwhFmt(rows.reduce((a, r) => a + (r.m || 0), 0))} kWh</td>` : ""}</tr></tfoot>
       </table>`;
 
     const autos = (c.automations || []).map((id) => {
@@ -598,7 +609,7 @@ class LinkyCycleCard extends EnergyBase {
 
     const status = ok
       ? `<div class="en-ok"><ha-icon icon="mdi:check-circle-outline"></ha-icon><div><b>Compteurs du cycle cohérents.</b> Les 6 baselines sont renseignées${ctlTxt ? ` · contrôle : ${esc(ctlTxt)}` : ""}.</div></div>`
-      : `<div class="en-alert"><ha-icon icon="mdi:alert-outline"></ha-icon><div><b>À vérifier :</b> ${[fewer ? `${fmt(ctlNum, 0)} compteurs actifs sur ${POSTES.length}` : "", zero ? `${zero} baseline${zero > 1 ? "s" : ""} à 0` : "", missing ? `${missing} baseline${missing > 1 ? "s" : ""} introuvable${missing > 1 ? "s" : ""}` : "", negative ? `${negative} compteur${negative > 1 ? "s" : ""} négatif${negative > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}. Le script de restauration peut les recaler.</div></div>`;
+      : `<div class="en-alert"><ha-icon icon="mdi:alert-outline"></ha-icon><div><b>À vérifier :</b> ${[gaps.length ? `écart avec les compteurs du mois sur ${gaps.map((r) => `${posteLabel(r.p)} (${r.gap > 0 ? "+" : ""}${fmt(r.gap, 1)} kWh)`).join(", ")}` : "", zero ? `${zero} baseline${zero > 1 ? "s" : ""} à 0` : "", missing ? `${missing} baseline${missing > 1 ? "s" : ""} introuvable${missing > 1 ? "s" : ""}` : "", negative ? `${negative} compteur${negative > 1 ? "s" : ""} négatif${negative > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}. ${gaps.length ? " Le cycle a commencé le 1er : ses compteurs devraient égaler ceux du mois. Une baseline trop haute ou trop basse en est la cause habituelle." : " Le script de restauration peut les recaler."}</div></div>`;
 
     const body = `${status}
       ${table}
@@ -941,9 +952,12 @@ const LINKYCYCLECARD_SCHEMA = [
   { name: "archive", selector: { entity: {} } },
   { name: "scripts", selector: { entity: { domain: "script", multiple: true } } },
   { name: "automations", selector: { entity: { domain: "automation", multiple: true } } },
+  { name: "cycle_start", selector: { text: {} } },
+  { name: "month_prefix", selector: { text: {} } },
+  { name: "month_suffix", selector: { text: {} } },
   THEME_SELECT,
 ];
-const LinkyCycleCardEditor = makeEditor(LINKYCYCLECARD_SCHEMA, { title: "Titre", control: "Contrôle des compteurs actifs", baseline_prefix: "Préfixe des baselines", cycle_prefix: "Préfixe des compteurs du cycle", cycle_suffix: "Suffixe des compteurs du cycle", total: "Énergie totale du cycle", archive: "Archive du cycle précédent", scripts: "Scripts proposés en boutons", automations: "Automatisations surveillées", theme: "Couleurs de la carte" }, LinkyCycleCard.DEFAULTS);
+const LinkyCycleCardEditor = makeEditor(LINKYCYCLECARD_SCHEMA, { title: "Titre", control: "Contrôle des compteurs actifs", baseline_prefix: "Préfixe des baselines", cycle_prefix: "Préfixe des compteurs du cycle", cycle_suffix: "Suffixe des compteurs du cycle", total: "Énergie totale du cycle", archive: "Archive du cycle précédent", scripts: "Scripts proposés en boutons", automations: "Automatisations surveillées", cycle_start: "Début du cycle (MM-JJ), pour comparer au mois", month_prefix: "Préfixe des compteurs du mois", month_suffix: "Suffixe des compteurs du mois", theme: "Couleurs de la carte" }, LinkyCycleCard.DEFAULTS);
 
 /* ---------------------------------------------------------- enregistrement */
 

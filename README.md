@@ -112,10 +112,12 @@ Sous chaque prix, la carte indique sa source : **MyElectricalData**, **valeur de
 | `cycle_prefix` / `cycle_suffix` | Compteurs du cycle par poste | `sensor.conso_` / `_cycle_en_cours` |
 | `total` | Énergie totale du cycle | `sensor.conso_totale_cycle_en_cours` |
 | `archive` | Énergie du cycle précédent archivée | `input_number.archive_conso_cycle_precedent` |
+| `cycle_start` | Début du cycle (`MM-JJ`), pour comparer les compteurs au mois | `10-01` |
+| `month_prefix` / `month_suffix` | Compteurs du mois par poste | `sensor.tempo_` / `_energie_ce_mois` |
 | `scripts` | Scripts proposés en boutons | `script.tempo_nouveau_cycle`, `script.tempo_recaler_cycle_01_10`, `script.tempo_restaurer_compteurs` |
 | `automations` | Automatisations surveillées | `automation.tempo_alerte_baselines_perdues`, `automation.tempo_nouveau_cycle_de_facturation_1er_octobre` |
 
-La carte signale une baseline à 0 ou introuvable, un compteur de cycle négatif ou moins de 6 compteurs actifs. Les boutons de scripts demandent une **confirmation en deux clics** (« Confirmer ? » pendant 5 secondes), car ces scripts modifient les compteurs.
+La carte signale une baseline à 0 ou introuvable et un compteur de cycle négatif. Pendant le **premier mois du cycle** (cycle commençant le 1er), elle compare aussi chaque compteur du cycle à celui du mois : ils doivent être égaux, et un écart d'au moins 0,5 kWh révèle en général une baseline mal réglée. La valeur de `control` est affichée telle quelle. Les boutons de scripts demandent une **confirmation en deux clics** (« Confirmer ? » pendant 5 secondes), car ces scripts modifient les compteurs.
 
 Un exemple avec les 5 cartes est dans [`exemples/cartes-energie.yaml`](exemples/cartes-energie.yaml).
 
