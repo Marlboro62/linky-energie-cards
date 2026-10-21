@@ -12,7 +12,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.1.1-beta";
+const CARD_VERSION = "0.1.2-beta";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -545,7 +545,8 @@ class LinkyCycleCard extends EnergyBase {
     cycle_start: "10-01",
     month_prefix: "sensor.tempo_",
     month_suffix: "_energie_ce_mois",
-    scripts: ["script.tempo_nouveau_cycle", "script.tempo_recaler_cycle_01_10", "script.tempo_restaurer_compteurs"],
+    // « Nouveau cycle » n'est volontairement pas proposé : il remet le cycle à zéro et écrase l'archive.
+    scripts: ["script.tempo_recaler_cycle_01_10", "script.tempo_restaurer_compteurs"],
     automations: ["automation.tempo_alerte_baselines_perdues", "automation.tempo_nouveau_cycle_de_facturation_1er_octobre"],
     theme: "v2",
   };
@@ -609,7 +610,7 @@ class LinkyCycleCard extends EnergyBase {
 
     const status = ok
       ? `<div class="en-ok"><ha-icon icon="mdi:check-circle-outline"></ha-icon><div><b>Compteurs du cycle cohérents.</b> Les 6 baselines sont renseignées${ctlTxt ? ` · contrôle : ${esc(ctlTxt)}` : ""}.</div></div>`
-      : `<div class="en-alert"><ha-icon icon="mdi:alert-outline"></ha-icon><div><b>À vérifier :</b> ${[gaps.length ? `écart avec les compteurs du mois sur ${gaps.map((r) => `${posteLabel(r.p)} (${r.gap > 0 ? "+" : ""}${fmt(r.gap, 1)} kWh)`).join(", ")}` : "", zero ? `${zero} baseline${zero > 1 ? "s" : ""} à 0` : "", missing ? `${missing} baseline${missing > 1 ? "s" : ""} introuvable${missing > 1 ? "s" : ""}` : "", negative ? `${negative} compteur${negative > 1 ? "s" : ""} négatif${negative > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}. ${gaps.length ? " Le cycle a commencé le 1er : ses compteurs devraient égaler ceux du mois. Une baseline trop haute ou trop basse en est la cause habituelle." : " Le script de restauration peut les recaler."}</div></div>`;
+      : `<div class="en-alert"><ha-icon icon="mdi:alert-outline"></ha-icon><div><b>À vérifier :</b> ${[gaps.length ? `écart avec les compteurs du mois sur ${gaps.map((r) => `${posteLabel(r.p)} (${r.gap > 0 ? "+" : ""}${fmt(r.gap, 1)} kWh)`).join(", ")}` : "", zero ? `${zero} baseline${zero > 1 ? "s" : ""} à 0` : "", missing ? `${missing} baseline${missing > 1 ? "s" : ""} introuvable${missing > 1 ? "s" : ""}` : "", negative ? `${negative} compteur${negative > 1 ? "s" : ""} négatif${negative > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}. ${gaps.length ? " Le cycle a commencé le 1er : ses compteurs devraient égaler ceux du mois. Un des deux est faux (compteur du mois ou baseline) : vérifiez avec les données Enedis avant de corriger." : " Le script de restauration peut les recaler."}</div></div>`;
 
     const body = `${status}
       ${table}

@@ -17,7 +17,6 @@ cards:
 
   - type: custom:linky-cycle-card
     scripts:
-      - script.tempo_nouveau_cycle
       - script.tempo_recaler_cycle_01_10
       - script.tempo_restaurer_compteurs
     automations:
