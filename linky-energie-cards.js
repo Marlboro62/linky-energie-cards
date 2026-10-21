@@ -1,0 +1,973 @@
+/*
+ * Cartes Linky Énergie — cinq cartes indépendantes dans un seul fichier, pour Home Assistant,
+ * au style des cartes MyElectricalData new (Carte Enedis Linky New) :
+ *
+ *   custom:linky-puissance-card     puissance en direct sur la puissance souscrite
+ *   custom:linky-facture-card       coût du cycle de facturation et projection
+ *   custom:linky-tempo-postes-card  énergie et coût des 6 postes Tempo
+ *   custom:linky-tempo-prix-card    prix Tempo et vérification de leur source
+ *   custom:linky-cycle-card         contrôle des compteurs du cycle et scripts de maintenance
+ *
+ * Une seule ressource à ajouter ; chaque carte s'utilise seule. Aucune ne remplace une autre carte.
+ */
+
+(() => {
+const CARD_VERSION = "0.1.0-beta";
+
+/* ------------------------------------------------------------- utilitaires */
+
+const fmt = (n, digits = 1) =>
+  n === null || n === undefined
+    ? "—"
+    : Number(n).toLocaleString("fr-FR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+
+const TEMPO = {
+  blue: { label: "Bleu", cls: "t-blue" },
+  white: { label: "Blanc", cls: "t-white" },
+  red: { label: "Rouge", cls: "t-red" },
+};
+
+const cap = (s) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
+
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+/** Classe de thème de la carte :
+ *  v2   : style MyElectricalData, toujours bleu nuit ;
+ *  auto : style MyElectricalData, bleu nuit si Home Assistant est en mode sombre, clair sinon ;
+ *  ha   : couleurs du thème Home Assistant (clair ou sombre). */
+const themeClass = (theme, hass) => {
+  const light = hass?.themes?.darkMode === false;
+  if (theme === "ha") return `th-ha${light ? " light" : ""}`;
+  if (theme === "auto") return `th-v2${light ? " light" : ""}`;
+  return "th-v2";
+};
+
+/* ------------------------------------------------------------ base commune */
+
+/** Postes Tempo : clé dans les noms d'entités, couleur, libellés. */
+const POSTES = [
+  { k: "bleu_hc", c: "blue", en: "blue_hc", h: "HC" },
+  { k: "bleu_hp", c: "blue", en: "blue_hp", h: "HP" },
+  { k: "blanc_hc", c: "white", en: "white_hc", h: "HC" },
+  { k: "blanc_hp", c: "white", en: "white_hp", h: "HP" },
+  { k: "rouge_hc", c: "red", en: "red_hc", h: "HC" },
+  { k: "rouge_hp", c: "red", en: "red_hp", h: "HP" },
+];
+
+/** Poste en cours d'après un texte du type « HP BLEU » (Lixee) ou « bleu_hp ». */
+const currentPoste = (txt) => {
+  const t = String(txt || "").toUpperCase();
+  const c = /ROUGE|RED/.test(t) ? "rouge" : /BLANC|WHITE/.test(t) ? "blanc" : /BLEU|BLUE/.test(t) ? "bleu" : null;
+  const h = /HC/.test(t) ? "hc" : /HP/.test(t) ? "hp" : null;
+  return c && h ? `${c}_${h}` : null;
+};
+
+const posteLabel = (p) => `${TEMPO[p.c].label} ${p.h}`;
+const kwhFmt = (v) => (v === null || v === undefined ? "—" : fmt(v, Math.abs(v) < 10 ? 2 : 1));
+const priceFmt = (v) => (v === null || v === undefined ? "—" : `${fmt(v, 4)} €`);
+
+/** Montant en euros, 3 décimales sous 10 centimes. */
+const eur = (n) => {
+  if (n === null || n === undefined || !Number.isFinite(n)) return "—";
+  const d = Math.abs(n) < 0.1 && n !== 0 ? 3 : 2;
+  return n.toLocaleString("fr-FR", { minimumFractionDigits: d, maximumFractionDigits: d }) + " €";
+};
+
+/** « il y a 3 h », « il y a 2 j ». */
+const ago = (iso) => {
+  if (!iso) return "jamais";
+  const s = (Date.now() - new Date(iso).getTime()) / 1000;
+  if (!Number.isFinite(s)) return "—";
+  if (s < 90) return "à l'instant";
+  if (s < 3600) return `il y a ${Math.round(s / 60)} min`;
+  if (s < 86400) return `il y a ${Math.round(s / 3600)} h`;
+  return `il y a ${Math.round(s / 86400)} j`;
+};
+
+const BRAND = `<svg viewBox="0 0 32 32" aria-hidden="true"><path class="house" d="M4 14.5 16 4l12 10.5V27a1.5 1.5 0 0 1-1.5 1.5h-5M10.5 28.5h-5A1.5 1.5 0 0 1 4 27V14.5"/><path class="bolt" d="M17.5 9 11 18h4.5l-1.5 8 7-10h-4.6z"/></svg>`;
+
+/** Base des cinq cartes : configuration, lecture des états, clics, rendu seulement quand une entité suivie change. */
+class EnergyBase extends HTMLElement {
+  static getStubConfig() {
+    return {};
+  }
+
+  setConfig(config) {
+    this._config = { ...this.constructor.DEFAULTS, ...(config || {}) };
+    this._sig = null;
+    this._armed = null;
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+    if (!this._clicks) {
+      this.shadowRoot.addEventListener("click", (this._clicks = (ev) => this._click(ev)));
+    }
+    this._render();
+  }
+
+  set hass(hass) {
+    this._hass = hass;
+    this._render();
+  }
+
+  getCardSize() {
+    return 5;
+  }
+
+  _click(ev) {
+    const tab = ev.target.closest?.("[data-tab]");
+    if (tab) {
+      this._tab = tab.dataset.tab;
+      this._render(true);
+      return;
+    }
+    const run = ev.target.closest?.("[data-run]");
+    if (run) {
+      ev.stopPropagation();
+      const id = run.dataset.run;
+      // Premier clic : arme le bouton ; second clic dans les 5 s : lance le script.
+      if (this._armed === id) {
+        this._armed = null;
+        clearTimeout(this._armTimer);
+        const [domain] = id.split(".");
+        this._hass?.callService(domain, "turn_on", { entity_id: id });
+      } else {
+        this._armed = id;
+        clearTimeout(this._armTimer);
+        this._armTimer = setTimeout(() => { this._armed = null; this._render(true); }, 5000);
+      }
+      this._render(true);
+      return;
+    }
+    const el = ev.target.closest?.("[data-entity]");
+    if (el && el.dataset.entity) {
+      const e = new Event("hass-more-info", { bubbles: true, composed: true });
+      e.detail = { entityId: el.dataset.entity };
+      this.dispatchEvent(e);
+    }
+  }
+
+  _st(id) {
+    return id ? this._hass?.states?.[id] : undefined;
+  }
+
+  _num(id) {
+    const st = this._st(id);
+    if (!st || st.state === "" || st.state === "unknown" || st.state === "unavailable") return null;
+    const n = Number(st.state);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  _unit(id, d = "") {
+    return this._st(id)?.attributes?.unit_of_measurement ?? d;
+  }
+
+  _name(id, d) {
+    return this._st(id)?.attributes?.friendly_name || d || id;
+  }
+
+  /** Entités dont un changement redessine la carte. */
+  _watch() {
+    return [];
+  }
+
+  _render(force) {
+    if (!this._config || !this._hass || !this.shadowRoot) return;
+    const c = this._config;
+    const ids = this._watch();
+    const sig = `${c.theme}|${this._hass.themes?.darkMode}|${this._tab}|${this._armed}|${this._extraSig?.() ?? ""}|` +
+      ids.map((id) => { const s = this._st(id); return s ? `${s.state}@${s.last_changed}` : "-"; }).join("|");
+    if (!force && sig === this._sig) return;
+    this._sig = sig;
+    const { sub = "", right = "", body = "", cls = "" } = this._content();
+    this.shadowRoot.innerHTML = `${STYLE}${EN_STYLE}<ha-card class="${themeClass(c.theme, this._hass)} ${cls}">
+      <header>
+        <div class="brand">${BRAND}<div><div class="title">${esc(c.title)}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div></div>
+        ${right ? `<div class="tempo">${right}</div>` : ""}
+      </header>${body}</ha-card>`;
+  }
+
+  /** Pastille « poste en cours ». */
+  _postePill(tarifId) {
+    const p = currentPoste(this._st(tarifId)?.state);
+    if (!p) return "";
+    const P = POSTES.find((x) => x.k === p);
+    return `<div class="pill ${TEMPO[P.c].cls}" data-entity="${esc(tarifId)}"><span class="dot"></span><span class="pill-l">En cours</span><span class="pill-v">${P.h} ${TEMPO[P.c].label}</span></div>`;
+  }
+
+  _tabs(list) {
+    return `<div class="en-tabs">${list.map((t) => `<button data-tab="${t.key}" class="${t.key === this._tab ? "on" : ""}">${t.label}</button>`).join("")}</div>`;
+  }
+}
+
+/* ------------------------------------------------------- 1. puissance en direct */
+
+class LinkyPuissanceCard extends EnergyBase {
+  static DEFAULTS = {
+    title: "Puissance",
+    power: "sensor.lixee_sinsts",
+    subscribed: "sensor.lixee_pref",
+    tarif: "sensor.lixee_current_price",
+    price: "sensor.tempo_tarif_ttc_actuel",
+    cost_rate: "sensor.tempo_total_instantane",
+    overrun: "binary_sensor.linky_depassement_puissance",
+    overruns_day: "sensor.linky_depassements_jour",
+    show_peak: true,
+    theme: "v2",
+  };
+
+  static getConfigElement() {
+    return document.createElement("linky-puissance-card-editor");
+  }
+
+  _watch() {
+    const c = this._config;
+    return [c.power, c.subscribed, c.tarif, c.price, c.cost_rate, c.overrun, c.overruns_day];
+  }
+
+  _extraSig() {
+    return this._peak?.v ?? "";
+  }
+
+  connectedCallback() {
+    clearInterval(this._timer);
+    this._timer = setInterval(() => this._loadPeak(), 5 * 60 * 1000);
+  }
+
+  disconnectedCallback() {
+    clearInterval(this._timer);
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    super.hass = hass;
+    if (first) this._loadPeak();
+  }
+
+  /** Pic du jour : statistique « max » de Home Assistant sur la puissance (si le capteur en a). */
+  async _loadPeak() {
+    const c = this._config;
+    if (!c?.show_peak || !this._hass?.callWS || !c.power) return;
+    const start = new Date();
+    start.setHours(0, 0, 0, 0);
+    try {
+      const res = await this._hass.callWS({
+        type: "recorder/statistics_during_period",
+        start_time: start.toISOString(),
+        statistic_ids: [c.power],
+        period: "hour",
+        types: ["max"],
+      });
+      const rows = res?.[c.power] || [];
+      let best = null;
+      for (const r of rows) if (Number.isFinite(r.max) && (!best || r.max > best.v)) best = { v: r.max, t: r.start };
+      this._peak = best;
+      this._render();
+    } catch (e) {
+      this._peak = null;
+    }
+  }
+
+  _content() {
+    const c = this._config;
+    const va = this._num(c.power);
+    const unit = this._unit(c.power, "VA");
+    // Puissance souscrite : en kVA (Lixee) ou en VA
+    let sub = this._num(c.subscribed);
+    const subUnit = String(this._unit(c.subscribed, "kVA")).toLowerCase();
+    const subVA = sub === null ? null : subUnit.startsWith("k") || sub < 100 ? sub * 1000 : sub;
+    const pct = va !== null && subVA ? (va / subVA) * 100 : null;
+    const lvl = pct === null ? "" : pct >= 90 ? "b-alert" : pct >= 70 ? "b-warn" : "b-ok";
+    const over = this._st(c.overrun)?.state === "on";
+    const nOver = this._num(c.overruns_day);
+    const price = this._num(c.price);
+    const rate = this._num(c.cost_rate);
+    const rateUnit = this._unit(c.cost_rate, "€/h");
+    const estRate = va !== null && price !== null ? (va / 1000) * price : null;
+
+    const peak = this._peak;
+    const peakPct = peak && subVA ? (peak.v / subVA) * 100 : null;
+    const body = `
+      ${over ? `<div class="en-alert"><ha-icon icon="mdi:flash-alert"></ha-icon><div><b>Dépassement de la puissance souscrite en cours.</b> Le disjoncteur peut couper : délestez un appareil.</div></div>` : ""}
+      <div class="en-hero" data-entity="${esc(c.power)}">
+        <div class="en-hero-l">Puissance appelée</div>
+        <div class="en-hero-v">${va !== null ? fmt(va, 0) : "—"}<span>${esc(unit)}</span></div>
+        ${pct !== null ? `<div class="g-bar ${lvl}"><i style="width:${Math.min(100, pct)}%"></i>${[50, 70, 90].map((m) => `<b class="tick" style="left:${m}%"></b>`).join("")}${peakPct !== null ? `<b class="peak" style="left:${Math.min(100, peakPct)}%" title="Pic du jour"></b>` : ""}</div>
+        <div class="g-n"><span class="g-k"><b>${fmt(pct, 0)} %</b> de la puissance souscrite</span><span>${fmt(subVA / 1000, subVA % 1000 ? 1 : 0)} kVA</span></div>` : ""}
+      </div>
+      <div class="tiles en-tiles">
+        ${rate !== null || estRate !== null ? `<div class="tile" data-entity="${esc(rate !== null ? c.cost_rate : c.price)}"><div class="tile-l">Coût en ce moment</div><div class="tile-v">${eur(rate ?? estRate)}<span>${esc(rate !== null ? String(rateUnit).replace("€", "").trim() : "/h")}</span></div><div class="tile-n">${rate === null ? "estimé : puissance × prix du kWh" : `≈ ${eur((rate ?? 0) * 24)} sur 24 h à ce rythme`}</div></div>` : ""}
+        ${peak ? `<div class="tile" data-entity="${esc(c.power)}"><div class="tile-l">Pic du jour</div><div class="tile-v">${fmt(peak.v, 0)}<span>${esc(unit)}</span></div><div class="tile-n">à ${new Date(peak.t).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}${peakPct !== null ? ` · ${fmt(peakPct, 0)} %` : ""}</div></div>` : ""}
+        ${nOver !== null ? `<div class="tile ${nOver > 0 ? "t-warn" : ""}" data-entity="${esc(c.overruns_day)}"><div class="tile-l">Dépassements aujourd'hui</div><div class="tile-v">${fmt(nOver, 0)}</div><div class="tile-n">${nOver > 0 ? "pensez à décaler les gros appareils" : "aucun"}</div></div>` : ""}
+      </div>`;
+    const right = this._postePill(c.tarif) + (price !== null ? `<div class="pill" data-entity="${esc(c.price)}"><span class="pill-l">kWh</span><span class="pill-v">${priceFmt(price)}</span></div>` : "");
+    return { sub: "En direct, compteur Linky", right, body, cls: over ? "en-over" : "" };
+  }
+}
+
+/* ------------------------------------------------------- 2. facture du cycle */
+
+class LinkyFactureCard extends EnergyBase {
+  static DEFAULTS = {
+    title: "Facture",
+    cycle_start: "10-01",
+    cost_cycle: "sensor.tempo_cout_total_cycle_en_cours",
+    energy_cycle: "sensor.tempo_cout_energie_cycle_en_cours",
+    cost_month: "sensor.tempo_cout_total_ce_mois",
+    energy_month: "sensor.tempo_cout_energie_ce_mois",
+    cost_day: "sensor.tempo_cout_total_aujourd_hui",
+    estimate_month: "sensor.edf_estimation_mensuelle",
+    subscription_month: "input_number.abonnement_mensuel_tempo",
+    kwh_cycle: "sensor.conso_totale_cycle_en_cours",
+    kwh_prev_cycle: "sensor.conso_cycle_precedent_archive",
+    kwh_month: "sensor.conso_totale_mensuelle",
+    kwh_day: "sensor.tempo_consommation_totale_aujourd_hui",
+    budget_month: null,
+    theme: "v2",
+  };
+
+  static getConfigElement() {
+    return document.createElement("linky-facture-card-editor");
+  }
+
+  _watch() {
+    const c = this._config;
+    return [c.cost_cycle, c.energy_cycle, c.cost_month, c.energy_month, c.cost_day, c.estimate_month, c.subscription_month, c.kwh_cycle, c.kwh_prev_cycle, c.kwh_month, c.kwh_day];
+  }
+
+  _extraSig() {
+    return new Date().toDateString();
+  }
+
+  /** Début et fin du cycle de facturation en cours (cycle_start au format MM-JJ). */
+  _cycle() {
+    const [mm, dd] = String(this._config.cycle_start || "10-01").split("-").map(Number);
+    const now = new Date();
+    let start = new Date(now.getFullYear(), (mm || 10) - 1, dd || 1);
+    if (start > now) start = new Date(now.getFullYear() - 1, (mm || 10) - 1, dd || 1);
+    const end = new Date(start.getFullYear() + 1, start.getMonth(), start.getDate());
+    const total = Math.round((end - start) / 86400000);
+    const elapsed = Math.max(1, (now - start) / 86400000);
+    return { start, end, total, elapsed };
+  }
+
+  _content() {
+    const c = this._config;
+    const cy = this._cycle();
+    const total = this._num(c.cost_cycle);
+    const energy = this._num(c.energy_cycle);
+    const subsc = total !== null && energy !== null ? total - energy : null;
+    const proj = total !== null ? (total / cy.elapsed) * cy.total : null;
+    const kwh = this._num(c.kwh_cycle);
+    const prevKwh = this._num(c.kwh_prev_cycle);
+    const projKwh = kwh !== null ? (kwh / cy.elapsed) * cy.total : null;
+    const avg = energy !== null && kwh ? energy / kwh : null;
+    const evo = projKwh !== null && prevKwh ? ((projKwh - prevKwh) / prevKwh) * 100 : null;
+    const pctYear = Math.min(100, (cy.elapsed / cy.total) * 100);
+    const startTxt = cy.start.getDate() === 1 ? `1er ${cy.start.toLocaleDateString("fr-FR", { month: "long" })}` : cy.start.toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
+    const endTxt = new Date(cy.end - 86400000).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
+
+    const month = this._num(c.cost_month);
+    const est = this._num(c.estimate_month);
+    const budget = Number(c.budget_month) || null;
+    const day = this._num(c.cost_day);
+    const tile = (id, label, v, note, cls = "") =>
+      v === null ? "" : `<div class="tile ${cls}" data-entity="${esc(id)}"><div class="tile-l">${label}</div><div class="tile-v">${v}</div>${note ? `<div class="tile-n">${note}</div>` : ""}</div>`;
+    const monthName = new Date().toLocaleDateString("fr-FR", { month: "long" });
+
+    const body = `
+      <div class="en-hero" data-entity="${esc(c.cost_cycle)}">
+        <div class="en-hero-l">Cycle en cours, depuis le ${startTxt}</div>
+        <div class="en-hero-row">
+          <div class="en-hero-v">${total !== null ? eur(total).replace(" €", "") : "—"}<span>€</span></div>
+          ${proj !== null ? `<div class="en-proj" title="Coût du cycle ramené à 365 jours au rythme actuel : l'hiver et les jours rouges ne sont pas anticipés."><span>Projection au rythme actuel</span><b>${fmt(proj, 0)} €</b></div>` : ""}
+        </div>
+        ${energy !== null ? `<div class="en-hero-n">dont énergie <b>${eur(energy)}</b>${subsc !== null ? ` · abonnement <b>${eur(subsc)}</b>` : ""}${avg !== null ? ` · <b>${fmt(avg, 4)} €</b> le kWh en moyenne` : ""}</div>` : ""}
+        <div class="g-bar b-ok cyc"><i style="width:${pctYear}%"></i></div>
+        <div class="g-n"><span>jour ${Math.floor(cy.elapsed) + 1} sur ${cy.total}</span><span>fin le ${endTxt}</span></div>
+      </div>
+      <div class="tiles en-tiles">
+        ${tile(c.cost_month, `${cap(monthName)}`, month !== null ? eur(month) : null, [this._num(c.energy_month) !== null ? `énergie ${eur(this._num(c.energy_month))}` : null, this._num(c.kwh_month) !== null ? `${kwhFmt(this._num(c.kwh_month))} kWh` : null].filter(Boolean).join(" · "))}
+        ${tile(c.estimate_month, "Estimation du mois", est !== null ? eur(est) : null, budget ? `budget ${eur(budget)}${est !== null ? (est > budget ? ` · <em class="warn">+${eur(est - budget)}</em>` : ` · <em class="ok">${eur(budget - est)} de marge</em>`) : ""}` : "", budget && est > budget ? "t-warn" : "")}
+        ${tile(c.cost_day, "Aujourd'hui", day !== null ? eur(day) : null, this._num(c.kwh_day) !== null ? `${kwhFmt(this._num(c.kwh_day))} kWh` : "")}
+        ${tile(c.kwh_cycle, "Énergie du cycle", kwh !== null ? `${fmt(kwh, 0)}<span>kWh</span>` : null, prevKwh !== null ? `projection ${fmt(projKwh, 0)} kWh · cycle précédent ${fmt(prevKwh, 0)} kWh${evo !== null ? ` <em class="${evo > 0 ? "warn" : "ok"}">${evo > 0 ? "+" : ""}${fmt(evo, 0)} %</em>` : ""}` : "")}
+      </div>`;
+    const right = this._num(c.subscription_month) !== null
+      ? `<div class="pill" data-entity="${esc(c.subscription_month)}"><span class="pill-l">Abonnement</span><span class="pill-v">${eur(this._num(c.subscription_month))}/mois</span></div>`
+      : "";
+    return { sub: "EDF Tempo, au tarif en vigueur", right, body };
+  }
+}
+
+/* ------------------------------------------------------- 3. énergie par poste */
+
+const PERIODS = [
+  { key: "jour", label: "Aujourd'hui", cfg: "suffix_day" },
+  { key: "mois", label: "Ce mois", cfg: "suffix_month" },
+  { key: "cycle", label: "Cycle", cfg: "suffix_cycle" },
+];
+
+class LinkyTempoPostesCard extends EnergyBase {
+  static DEFAULTS = {
+    title: "Énergie par poste Tempo",
+    period: "mois",
+    prefix: "sensor.tempo_",
+    suffix_day: "_energie_aujourdhui",
+    suffix_month: "_energie_ce_mois",
+    suffix_cycle: "_energie_cette_annee",
+    price_prefix: "sensor.tempo_prix_",
+    tarif: "sensor.lixee_current_price",
+    theme: "v2",
+  };
+
+  static getConfigElement() {
+    return document.createElement("linky-tempo-postes-card-editor");
+  }
+
+  setConfig(config) {
+    super.setConfig(config);
+    if (!this._tab) {
+      this._tab = PERIODS.some((p) => p.key === this._config.period) ? this._config.period : "mois";
+      this._render(true);
+    }
+  }
+
+  _watch() {
+    const c = this._config;
+    return [c.tarif, ...POSTES.flatMap((p) => [`${c.price_prefix}${p.k}`, ...PERIODS.map((x) => `${c.prefix}${p.k}${c[x.cfg]}`)])];
+  }
+
+  _content() {
+    const c = this._config;
+    const per = PERIODS.find((p) => p.key === this._tab) || PERIODS[1];
+    const cur = currentPoste(this._st(c.tarif)?.state);
+    const rows = POSTES.map((p) => {
+      const id = `${c.prefix}${p.k}${c[per.cfg]}`;
+      const kwh = this._num(id);
+      const price = this._num(`${c.price_prefix}${p.k}`);
+      return { p, id, kwh, price, cost: kwh !== null && price !== null ? kwh * price : null };
+    });
+    const sumK = rows.reduce((a, r) => a + (r.kwh || 0), 0);
+    const sumE = rows.reduce((a, r) => a + (r.cost || 0), 0);
+    const anyCost = rows.some((r) => r.cost !== null);
+    const split = sumK > 0
+      ? `<div class="bar en-split">${rows.filter((r) => r.kwh > 0).map((r) => `<i class="s-${r.p.c} s-${r.p.h}" style="width:${(r.kwh / sumK) * 100}%" title="${posteLabel(r.p)} : ${kwhFmt(r.kwh)} kWh"></i>`).join("")}</div>`
+      : "";
+    const table = `<table class="en-t">
+        <thead><tr><th>Poste</th><th>kWh</th><th>Part</th><th>Prix</th>${anyCost ? "<th>Coût</th>" : ""}</tr></thead>
+        <tbody>${rows.map((r) => `<tr class="${r.p.k === cur ? "cur" : ""}" data-entity="${esc(r.id)}">
+          <td><i class="sq s-${r.p.c} s-${r.p.h}"></i>${posteLabel(r.p)}${r.p.k === cur ? '<span class="now">en cours</span>' : ""}</td>
+          <td>${kwhFmt(r.kwh)}</td>
+          <td>${sumK > 0 && r.kwh !== null ? `${fmt((r.kwh / sumK) * 100, 0)} %` : "—"}</td>
+          <td>${r.price !== null ? fmt(r.price, 4) : "—"}</td>
+          ${anyCost ? `<td>${eur(r.cost)}</td>` : ""}
+        </tr>`).join("")}</tbody>
+        <tfoot><tr><td>Total</td><td>${kwhFmt(sumK)}</td><td></td><td>${sumK > 0 && anyCost ? fmt(sumE / sumK, 4) : ""}</td>${anyCost ? `<td>${eur(sumE)}</td>` : ""}</tr></tfoot>
+      </table>`;
+    const body = `${this._tabs(PERIODS)}
+      <div class="en-sum"><div><span>Énergie</span><b>${kwhFmt(sumK)} kWh</b></div>${anyCost ? `<div><span>Coût énergie</span><b>${eur(sumE)}</b></div>` : ""}</div>
+      ${split}${table}
+      ${anyCost ? `<footer>Coût calculé avec le prix actuel de chaque poste, hors abonnement.</footer>` : ""}`;
+    return { sub: per.label, right: this._postePill(c.tarif), body };
+  }
+}
+
+/* ------------------------------------------------------- 4. prix Tempo */
+
+class LinkyTempoPrixCard extends EnergyBase {
+  static DEFAULTS = {
+    title: "Prix Tempo",
+    price_prefix: "sensor.tempo_prix_",
+    source_prefix: "sensor.myelectricaldata_tempo_price_",
+    fallback_prefix: "input_number.tempo_tarif_",
+    current: "sensor.tempo_tarif_ttc_actuel",
+    tarif: "sensor.lixee_current_price",
+    theme: "v2",
+  };
+
+  static getConfigElement() {
+    return document.createElement("linky-tempo-prix-card-editor");
+  }
+
+  _watch() {
+    const c = this._config;
+    return [c.current, c.tarif, ...POSTES.flatMap((p) => [`${c.price_prefix}${p.k}`, `${c.source_prefix}${p.en}`, `${c.fallback_prefix}${p.k}`])];
+  }
+
+  _content() {
+    const c = this._config;
+    const cur = currentPoste(this._st(c.tarif)?.state);
+    const same = (a, b) => a !== null && b !== null && Math.abs(a - b) < 0.00005;
+    let issues = 0;
+    const cell = (p) => {
+      const used = this._num(`${c.price_prefix}${p.k}`);
+      const med = this._num(`${c.source_prefix}${p.en}`);
+      const fb = this._num(`${c.fallback_prefix}${p.k}`);
+      let src = "";
+      let bad = false;
+      if (same(used, med)) src = `<span class="src ok">MyElectricalData</span>`;
+      else if (same(used, fb)) { src = `<span class="src warn">valeur de secours</span>`; bad = med === null || !same(med, fb); }
+      else if (used !== null) { src = `<span class="src warn">autre source</span>`; bad = true; }
+      if (med !== null && fb !== null && !same(med, fb)) bad = true;
+      if (bad) issues++;
+      const diff = med !== null && fb !== null && !same(med, fb) ? `<div class="pdiff">MyElectricalData ${priceFmt(med)} · secours ${priceFmt(fb)}</div>` : "";
+      return `<div class="pcell ${TEMPO[p.c].cls} ${p.k === cur ? "cur" : ""} ${bad ? "bad" : ""}" data-entity="${esc(`${c.price_prefix}${p.k}`)}">
+        <div class="pcell-h"><span class="dot"></span>${p.h}${p.k === cur ? '<span class="now">en cours</span>' : ""}</div>
+        <div class="pcell-v">${used !== null ? fmt(used, 4) : "—"}<span>€/kWh</span></div>
+        ${src}${diff}
+      </div>`;
+    };
+    const cols = ["blue", "white", "red"].map((col) => `<div class="pcol"><div class="pcol-h">${TEMPO[col].label}</div>${POSTES.filter((p) => p.c === col).map(cell).join("")}</div>`).join("");
+    const vals = POSTES.map((p) => this._num(`${c.price_prefix}${p.k}`));
+    const min = Math.min(...vals.filter((v) => v !== null));
+    const max = Math.max(...vals.filter((v) => v !== null));
+    const now = this._num(c.current);
+    const body = `
+      ${issues ? `<div class="en-alert warn"><ha-icon icon="mdi:alert-outline"></ha-icon><div><b>${issues} prix à vérifier.</b> La source MyElectricalData est indisponible ou différente de la valeur de secours.</div></div>` : ""}
+      <div class="pgrid">${cols}</div>
+      <div class="en-sum">
+        ${now !== null ? `<div data-entity="${esc(c.current)}"><span>Prix en ce moment</span><b>${priceFmt(now)}</b></div>` : ""}
+        ${Number.isFinite(min) && Number.isFinite(max) && min > 0 ? `<div><span>Écart entre le moins cher et le plus cher</span><b>× ${fmt(max / min, 1)}</b></div>` : ""}
+      </div>`;
+    return { sub: "Prix TTC du kWh par poste", right: this._postePill(c.tarif), body };
+  }
+}
+
+/* ------------------------------------------------------- 5. contrôle du cycle */
+
+class LinkyCycleCard extends EnergyBase {
+  static DEFAULTS = {
+    title: "Contrôle du cycle",
+    control: "sensor.tempo_controle_compteurs_actifs",
+    baseline_prefix: "input_number.baseline_",
+    cycle_prefix: "sensor.conso_",
+    cycle_suffix: "_cycle_en_cours",
+    total: "sensor.conso_totale_cycle_en_cours",
+    archive: "input_number.archive_conso_cycle_precedent",
+    scripts: ["script.tempo_nouveau_cycle", "script.tempo_recaler_cycle_01_10", "script.tempo_restaurer_compteurs"],
+    automations: ["automation.tempo_alerte_baselines_perdues", "automation.tempo_nouveau_cycle_de_facturation_1er_octobre"],
+    theme: "v2",
+  };
+
+  static getConfigElement() {
+    return document.createElement("linky-cycle-card-editor");
+  }
+
+  _watch() {
+    const c = this._config;
+    return [c.control, c.total, c.archive, ...POSTES.flatMap((p) => [`${c.baseline_prefix}${p.k}`, `${c.cycle_prefix}${p.k}${c.cycle_suffix}`]), ...(c.scripts || []), ...(c.automations || [])];
+  }
+
+  _content() {
+    const c = this._config;
+    const ctl = this._st(c.control);
+    const ctlNum = this._num(c.control);
+    const rows = POSTES.map((p) => ({ p, b: this._num(`${c.baseline_prefix}${p.k}`), bid: `${c.baseline_prefix}${p.k}`, v: this._num(`${c.cycle_prefix}${p.k}${c.cycle_suffix}`), vid: `${c.cycle_prefix}${p.k}${c.cycle_suffix}` }));
+    const zero = rows.filter((r) => r.b === 0).length;
+    const missing = rows.filter((r) => r.b === null).length;
+    const negative = rows.filter((r) => r.v !== null && r.v < 0).length;
+    const fewer = ctlNum !== null && ctlNum < POSTES.length;
+    const ok = !zero && !negative && !missing && !fewer;
+    const ctlTxt = ctl ? `${ctl.state}${ctl.attributes?.unit_of_measurement ? ` ${ctl.attributes.unit_of_measurement}` : ""}` : null;
+
+    const table = `<table class="en-t">
+        <thead><tr><th>Poste</th><th>Baseline (index kWh)</th><th>Cycle en cours</th></tr></thead>
+        <tbody>${rows.map((r) => `<tr>
+          <td><i class="sq s-${r.p.c} s-${r.p.h}"></i>${posteLabel(r.p)}</td>
+          <td data-entity="${esc(r.bid)}" class="${r.b === 0 || r.b === null ? "bad" : ""}">${r.b !== null ? fmt(r.b, 1) : "—"}</td>
+          <td data-entity="${esc(r.vid)}" class="${r.v !== null && r.v < 0 ? "bad" : ""}">${kwhFmt(r.v)} kWh</td>
+        </tr>`).join("")}</tbody>
+        <tfoot><tr><td>Total</td><td></td><td data-entity="${esc(c.total)}">${kwhFmt(this._num(c.total))} kWh</td></tr></tfoot>
+      </table>`;
+
+    const autos = (c.automations || []).map((id) => {
+      const s = this._st(id);
+      if (!s) return `<div class="en-row miss"><ha-icon icon="mdi:robot-off-outline"></ha-icon><span>${esc(id)}</span><b>introuvable</b></div>`;
+      const on = s.state === "on";
+      return `<div class="en-row" data-entity="${esc(id)}"><ha-icon icon="${on ? "mdi:robot-outline" : "mdi:robot-off-outline"}"></ha-icon><span>${esc(this._name(id))}<small>dernier déclenchement : ${ago(s.attributes?.last_triggered)}</small></span><b class="${on ? "ok" : "warn"}">${on ? "active" : "désactivée"}</b></div>`;
+    }).join("");
+
+    const scripts = (c.scripts || []).map((id) => {
+      const s = this._st(id);
+      if (!s) return "";
+      const armed = this._armed === id;
+      const running = s.state === "on";
+      return `<button class="en-btn ${armed ? "armed" : ""}" data-run="${esc(id)}" ${running ? "disabled" : ""}>
+          <ha-icon icon="${esc(s.attributes?.icon || "mdi:play-circle-outline")}"></ha-icon>
+          <span>${running ? "En cours…" : armed ? "Confirmer ?" : esc(this._name(id))}</span>
+        </button>`;
+    }).join("");
+
+    const status = ok
+      ? `<div class="en-ok"><ha-icon icon="mdi:check-circle-outline"></ha-icon><div><b>Compteurs du cycle cohérents.</b> Les 6 baselines sont renseignées${ctlTxt ? ` · contrôle : ${esc(ctlTxt)}` : ""}.</div></div>`
+      : `<div class="en-alert"><ha-icon icon="mdi:alert-outline"></ha-icon><div><b>À vérifier :</b> ${[fewer ? `${fmt(ctlNum, 0)} compteurs actifs sur ${POSTES.length}` : "", zero ? `${zero} baseline${zero > 1 ? "s" : ""} à 0` : "", missing ? `${missing} baseline${missing > 1 ? "s" : ""} introuvable${missing > 1 ? "s" : ""}` : "", negative ? `${negative} compteur${negative > 1 ? "s" : ""} négatif${negative > 1 ? "s" : ""}` : ""].filter(Boolean).join(", ")}. Le script de restauration peut les recaler.</div></div>`;
+
+    const body = `${status}
+      ${table}
+      ${this._num(c.archive) !== null ? `<div class="en-sum"><div data-entity="${esc(c.archive)}"><span>Cycle précédent archivé</span><b>${fmt(this._num(c.archive), 0)} kWh</b></div>${ctlNum !== null || ctlTxt ? `<div data-entity="${esc(c.control)}"><span>Compteurs actifs</span><b>${esc(ctlTxt)}</b></div>` : ""}</div>` : ""}
+      ${autos ? `<div class="en-sec"><div class="chart-h"><span>Automatisations</span></div>${autos}</div>` : ""}
+      ${scripts ? `<div class="en-sec"><div class="chart-h"><span>Actions</span><span>2 clics pour confirmer</span></div><div class="en-btns">${scripts}</div></div>` : ""}`;
+    return { sub: "Baselines, automatisations et scripts", right: "", body, cls: ok ? "" : "en-over" };
+  }
+}
+
+const EN_STYLE = `<style>
+ha-card { display: block; padding-bottom: 14px; }
+ha-card.en-over { border-color: var(--t-red); }
+.en-alert, .en-ok { display: flex; gap: 10px; align-items: center; margin: 4px 12px 0; padding: 10px 12px; border-radius: 12px; font-size: .84rem;
+  background: color-mix(in srgb, var(--t-red) 16%, transparent); border: 1px solid var(--t-red); }
+.en-alert ha-icon { color: var(--t-red); flex: none; }
+.en-alert.warn { background: color-mix(in srgb, #f0a33a 14%, transparent); border-color: #f0a33a; } .en-alert.warn ha-icon { color: #f0a33a; }
+.en-ok { background: color-mix(in srgb, var(--med-down) 12%, transparent); border-color: color-mix(in srgb, var(--med-down) 60%, transparent); }
+.en-ok ha-icon { color: var(--med-down); flex: none; }
+.en-hero { margin: 8px 12px 0; padding: 14px 16px; border-radius: 14px; background: var(--med-surface); border: 1px solid var(--med-line); cursor: pointer; }
+.en-hero-l { font-size: .82rem; color: var(--med-muted); }
+.en-hero-row { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.en-hero-v { font-size: 2.4rem; font-weight: 700; line-height: 1.15; }
+.en-hero-v span { font-size: .95rem; font-weight: 500; color: var(--med-muted); margin-left: 4px; }
+.en-hero-n { font-size: .78rem; color: var(--med-muted); margin-top: 4px; }
+.en-hero-n b { color: var(--med-text); font-weight: 600; }
+.en-proj { text-align: right; font-size: .78rem; color: var(--med-muted); display: flex; flex-direction: column; }
+.en-proj b { font-size: 1.3rem; color: var(--med-text); }
+.g-bar { position: relative; height: 10px; border-radius: 6px; background: var(--med-line); margin: 10px 0 6px; }
+.g-bar.cyc { height: 6px; }
+.g-bar i { display: block; height: 100%; border-radius: 6px; background: var(--med-muted); }
+.g-bar.b-ok i { background: linear-gradient(90deg, var(--med-blue), var(--med-green)); }
+.g-bar.b-warn i { background: #f0a33a; } .g-bar.b-alert i { background: var(--t-red); }
+.g-bar .tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--med-bg); opacity: .7; }
+.g-bar .peak { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--med-text); }
+.g-n { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; font-size: .78rem; color: var(--med-muted); }
+.g-n b { color: var(--med-text); font-weight: 600; }
+.en-tiles { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)) !important; }
+.en-tiles .tile { cursor: pointer; }
+.en-tiles .tile-v { font-size: 1.3rem; }
+.tile.t-warn { border-color: #f0a33a; }
+em.warn { color: var(--med-up); font-style: normal; font-weight: 600; } em.ok { color: var(--med-down); font-style: normal; font-weight: 600; }
+.en-tabs { display: flex; gap: 4px; margin: 6px 12px 0; padding: 3px; border-radius: 10px; background: var(--med-surface); border: 1px solid var(--med-line); }
+.en-tabs button { flex: 1; border: 0; background: none; color: var(--med-muted); font: inherit; font-size: .8rem; padding: 6px 0; border-radius: 8px; cursor: pointer; }
+.en-tabs button.on { background: var(--med-blue); color: #fff; font-weight: 600; }
+.en-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 12px 0; }
+.en-sum > div { flex: 1 1 140px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--med-line); display: flex; flex-direction: column; font-size: .78rem; color: var(--med-muted); }
+.en-sum > div[data-entity] { cursor: pointer; }
+.en-sum b { font-size: 1.15rem; color: var(--med-text); }
+.bar.en-split { margin: 10px 14px 0; height: 10px; }
+.bar .s-blue.s-HC, .sq.s-blue.s-HC { background: #8fb0f0; } .bar .s-blue.s-HP, .sq.s-blue.s-HP { background: var(--t-blue); }
+.bar .s-white.s-HC, .sq.s-white.s-HC { background: #f2f5f9; } .bar .s-white.s-HP, .sq.s-white.s-HP { background: #aab3c0; }
+.bar .s-red.s-HC, .sq.s-red.s-HC { background: #f39a9a; } .bar .s-red.s-HP, .sq.s-red.s-HP { background: var(--t-red); }
+ha-card.light .bar .s-white.s-HC, ha-card.light .sq.s-white.s-HC { background: #dbe2ec; }
+.sq { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 8px; vertical-align: -1px; }
+.en-t { width: calc(100% - 24px); margin: 10px 12px 0; border-collapse: collapse; font-size: .82rem; color: var(--med-text); }
+.en-t th { font-weight: 500; color: var(--med-muted); text-align: right; padding: 4px 6px; white-space: nowrap; font-size: .74rem; }
+.en-t th:first-child, .en-t td:first-child { text-align: left; }
+.en-t td { color: var(--med-text); text-align: right; padding: 6px; border-top: 1px solid var(--med-line); white-space: nowrap; }
+.en-t td[data-entity], .en-t tr[data-entity] { cursor: pointer; }
+.en-t tr.cur td { background: var(--med-surface); font-weight: 700; }
+.en-t td.bad { color: var(--t-red); font-weight: 700; }
+.en-t tfoot td { font-weight: 700; border-top: 2px solid var(--med-line); }
+.now { margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: .66rem; font-weight: 600; background: var(--med-blue); color: #fff; vertical-align: 1px; }
+.pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 12px 0; }
+@container (max-width: 400px) { .pgrid { grid-template-columns: 1fr; } }
+.pcol { display: flex; flex-direction: column; gap: 8px; }
+.pcol-h { font-size: .8rem; color: var(--med-muted); padding-left: 4px; }
+.pcell { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--med-line); cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
+.pcell.cur { border-color: var(--med-blue); background: var(--med-surface); }
+.pcell.bad { border-color: #f0a33a; }
+.pcell-h { display: flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--med-muted); }
+.pcell-v { font-size: 1.25rem; font-weight: 700; }
+.pcell-v span { font-size: .72rem; font-weight: 500; color: var(--med-muted); margin-left: 3px; }
+.src { font-size: .68rem; } .src.ok { color: var(--med-down); } .src.warn { color: #f0a33a; }
+.pdiff { font-size: .66rem; color: var(--med-muted); }
+ha-card.light .t-white .dot { box-shadow: inset 0 0 0 1px #aab3c0; }
+.en-sec { margin: 12px 12px 0; }
+.en-row { display: flex; align-items: center; gap: 10px; padding: 7px 4px; border-radius: 10px; cursor: pointer; font-size: .84rem; }
+.en-row:hover { background: var(--med-surface); }
+.en-row ha-icon { --mdc-icon-size: 20px; color: var(--med-muted); flex: none; }
+.en-row span { flex: 1; display: flex; flex-direction: column; }
+.en-row small { color: var(--med-muted); font-size: .72rem; }
+.en-row b { font-size: .76rem; } .en-row b.ok { color: var(--med-down); } .en-row b.warn, .en-row.miss b { color: #f0a33a; }
+.en-btns { display: flex; flex-wrap: wrap; gap: 8px; }
+.en-btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 10px;
+  border: 1px solid var(--med-line); background: var(--med-surface); font-size: .8rem; }
+.en-btn ha-icon { --mdc-icon-size: 18px; color: var(--med-blue); }
+.en-btn.armed { border-color: #f0a33a; background: color-mix(in srgb, #f0a33a 18%, transparent); font-weight: 700; }
+.en-btn.armed ha-icon { color: #f0a33a; }
+.en-btn[disabled] { opacity: .6; cursor: default; }
+.en-btn:focus-visible { outline: 2px solid var(--med-blue); }
+</style>`;
+
+/* ------------------------------------------------------------------ style */
+
+const STYLE = `<style>
+:host {
+  --med-bg: #1a2434; --med-surface: #212d40; --med-line: #2f3d55;
+  --med-text: #e7edf5; --med-muted: #8fa0b8;
+  --med-green: #96d21f; --med-blue: #1d93e3;
+  --med-hc: #4a7bd8; --med-hp: #d27333;
+  --t-blue: #3f7ff0; --t-white: #e9eef4; --t-red: #ee4a4a;
+  --med-up: #f08a4b; --med-down: #5fcf8a;
+}
+ha-card { background: var(--med-bg); color: var(--med-text); border: 1px solid var(--med-line);
+  border-radius: 18px; overflow: hidden; font-variant-numeric: tabular-nums; container-type: inline-size; }
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 18px 8px; flex-wrap: wrap; }
+.brand { display: flex; align-items: center; gap: 10px; }
+.brand svg { width: 34px; height: 34px; fill: none; }
+.brand .house { stroke: var(--med-green); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
+.brand .bolt { fill: var(--med-blue); }
+.title { font-size: 1.15rem; font-weight: 700; letter-spacing: .2px; }
+.sub { font-size: .78rem; color: var(--med-muted); }
+.tempo { display: flex; gap: 8px; }
+.pill { display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 999px;
+  background: var(--med-surface); border: 1px solid var(--med-line); font-size: .78rem; }
+.pill-l { color: var(--med-muted); }
+.pill-v { font-weight: 600; }
+.dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; background: var(--med-muted); flex: none; }
+.t-blue .dot { background: var(--t-blue); } .t-white .dot { background: var(--t-white); } .t-red .dot { background: var(--t-red); }
+.t-none .pill-v { color: var(--med-muted); font-weight: 400; }
+.quotas { display: flex; align-items: center; gap: 14px; padding: 0 18px 10px; font-size: .82rem; }
+.quota { display: inline-flex; align-items: center; gap: 5px; font-weight: 600; }
+.quota small { color: var(--med-muted); font-weight: 400; }
+.quota-l { color: var(--med-muted); }
+
+.hero { margin: 4px 12px 0; padding: 16px; border-radius: 14px; background: var(--med-surface);
+  border: 1px solid var(--med-line); display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; }
+.hero-l { color: var(--med-muted); font-size: .85rem; }
+.hero-v { font-size: 2.4rem; font-weight: 700; line-height: 1.1; }
+.hero-v span, .tile-v span { font-size: .9rem; font-weight: 500; color: var(--med-muted); margin-left: 4px; }
+.hero-r { text-align: right; align-self: center; }
+.cost { font-size: 1.6rem; font-weight: 700; color: var(--med-green); }
+.cost.none { color: var(--med-muted); }
+.cost.est { color: var(--med-text); opacity: .85; }
+.hero-p { font-size: .75rem; color: var(--med-muted); margin-top: 6px; }
+.cost-l { font-size: .75rem; color: var(--med-muted); max-width: 160px; }
+.evo { font-size: .8rem; font-weight: 600; margin-top: 2px; }
+.evo.up { color: var(--med-up); } .evo.down { color: var(--med-down); }
+.split { grid-column: 1 / -1; margin-top: 6px; }
+.split.wait { font-size: .8rem; color: var(--med-muted); border-top: 1px dashed var(--med-line); padding-top: 8px; }
+.bar { display: flex; height: 8px; border-radius: 6px; overflow: hidden; background: var(--med-line); }
+.bar i { display: block; } .bar .hc { background: var(--med-hc); } .bar .hp { background: var(--med-hp); }
+.split-l { display: flex; justify-content: space-between; font-size: .78rem; margin-top: 6px; }
+.k-hc { color: #8fb0f0; } .k-hp { color: #eaa070; }
+
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 10px 12px 0; }
+@container (min-width: 620px) { .tiles { grid-template-columns: repeat(4, 1fr); } }
+@container (min-width: 620px) { .tiles.six { grid-template-columns: repeat(3, 1fr); } }
+.tile { padding: 12px; border-radius: 12px; border: 1px solid var(--med-line); }
+.tile-l { font-size: .78rem; color: var(--med-muted); }
+.tile-v { font-size: 1.35rem; font-weight: 700; margin-top: 2px; }
+.tile-n { font-size: .72rem; color: var(--med-muted); margin-top: 4px; }
+
+.chart { margin: 14px 12px 0; }
+.chart-h { display: flex; justify-content: space-between; font-size: .82rem; color: var(--med-muted); margin: 0 4px 6px; }
+.legend { display: flex; align-items: center; gap: 6px; }
+.legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; margin-left: 6px; }
+.legend .k-hc { background: var(--med-hc); } .legend .k-hp { background: var(--med-hp); }
+.chart svg { width: 100%; height: 130px; display: block; }
+.chart rect.hc { fill: var(--med-hc); } .chart rect.hp { fill: var(--med-hp); }
+.chart rect.partial { fill: var(--med-muted); opacity: .35; }
+.chart g.est { opacity: .45; }
+.chart rect.sel { fill: rgba(255,255,255,.06); }
+.chart rect.hit { fill: transparent; cursor: pointer; }
+.days { display: grid; margin-top: 4px; }
+.day { all: unset; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding: 4px 0; border-radius: 8px; font-size: .68rem; color: var(--med-muted); text-transform: capitalize; }
+.day b { color: var(--med-text); font-size: .78rem; }
+.day .dot { width: 6px; height: 6px; margin-top: 2px; }
+.day.on { background: var(--med-surface); }
+.day:focus-visible { outline: 2px solid var(--med-blue); }
+
+.detail { margin: 8px 12px 0; padding: 10px 12px; border-radius: 12px; background: var(--med-surface); border: 1px solid var(--med-line); }
+.detail-h { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--med-muted); }
+.tag { padding: 1px 8px; border-radius: 999px; font-size: .72rem; font-weight: 700; color: #0f1724; }
+.tag.t-blue { background: var(--t-blue); color: #fff; } .tag.t-white { background: var(--t-white); } .tag.t-red { background: var(--t-red); color: #fff; }
+.detail-v { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; margin-top: 4px; font-size: .9rem; }
+.sep { width: 1px; height: 12px; background: var(--med-line); }
+.detail-p { font-size: .78rem; color: var(--med-muted); margin-top: 4px; }
+.warn { color: var(--t-red); font-style: normal; font-weight: 600; }
+
+.power { margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--med-line); }
+.power.is-over { border-color: var(--t-red); }
+.power-t { display: flex; justify-content: space-between; font-size: .85rem; }
+.gauge { height: 6px; border-radius: 6px; background: var(--med-line); margin: 8px 0 6px; overflow: hidden; }
+.gauge i { display: block; height: 100%; background: linear-gradient(90deg, var(--med-green), var(--med-blue)); }
+.is-over .gauge i { background: var(--t-red); }
+.power-n { font-size: .75rem; color: var(--med-muted); }
+
+.eco { margin: 10px 12px 0; padding: 8px 12px; border-radius: 12px; border: 1px solid var(--med-line); font-size: .82rem; display: flex; align-items: center; gap: 8px; }
+.eco.e-ok .dot { background: var(--med-down); }
+.eco.e-warn { border-color: #f0a33a; } .eco.e-warn .dot { background: #f0a33a; }
+.eco.e-alert { border-color: var(--t-red); } .eco.e-alert .dot { background: var(--t-red); }
+.eco-l { color: var(--med-muted); }
+footer { padding: 10px 18px 14px; font-size: .7rem; color: var(--med-muted); }
+.empty { padding: 18px; display: flex; flex-direction: column; gap: 6px; font-size: .9rem; }
+.empty span { color: var(--med-muted); }
+/* Thème Home Assistant : fond, textes et bordures suivent le thème clair ou sombre */
+ha-card.th-ha {
+  --med-bg: var(--ha-card-background, var(--card-background-color, #fff));
+  --med-surface: color-mix(in srgb, var(--primary-text-color, #000) 5%, transparent);
+  --med-line: var(--divider-color, rgba(127, 127, 127, .25));
+  --med-text: var(--primary-text-color, #1f2937);
+  --med-muted: var(--secondary-text-color, #6b7280);
+  border-radius: var(--ha-card-border-radius, 12px);
+  border: var(--ha-card-border-width, 1px) solid var(--ha-card-border-color, var(--divider-color, #e0e0e0));
+}
+ha-card.th-ha.light { --med-green: #4c8a0b; --med-up: #c2560f; --med-down: #1d8a4b; }
+/* Style MyElectricalData en version claire (theme: auto quand Home Assistant est en mode clair) */
+ha-card.th-v2.light {
+  --med-bg: #ffffff; --med-surface: #f2f5f9; --med-line: #dbe2ec;
+  --med-text: #1a2434; --med-muted: #5b6b82;
+  --med-green: #4c8a0b; --med-blue: #1673b8; --med-up: #c2560f; --med-down: #1d8a4b;
+  box-shadow: 0 1px 3px rgba(26, 36, 52, .08);
+}
+ha-card.light .k-hc { color: #2f5fb8; }
+ha-card.light .k-hp { color: #b35619; }
+ha-card.light .t-white .dot, ha-card.light .tag.t-white { box-shadow: inset 0 0 0 1px #aab3c0; }
+ha-card.light .chart rect.sel { fill: rgba(0, 0, 0, .05); }
+ha-card.light .tag.t-white { color: #1f2937; }
+@media (max-width: 420px) { .hero-v { font-size: 2rem; } .tempo { width: 100%; } }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>`;
+
+/* ----------------------------------------------------------------- éditeurs */
+
+const THEME_SELECT = {
+  name: "theme",
+  selector: {
+    select: {
+      mode: "dropdown",
+      options: [
+        { value: "v2", label: "Style MyElectricalData (bleu nuit)" },
+        { value: "auto", label: "Style MyElectricalData, clair ou sombre selon Home Assistant" },
+        { value: "ha", label: "Thème Home Assistant (clair ou sombre)" },
+      ],
+    },
+  },
+};
+
+/** Éditeur visuel : formulaire Home Assistant construit à partir du schéma. */
+function makeEditor(schema, labels, defaults) {
+  const hasDays = schema.some((s) => s.name === "days");
+  return class extends HTMLElement {
+    setConfig(config) {
+      this._config = { ...config };
+      this._draw();
+    }
+
+    set hass(hass) {
+      this._hass = hass;
+      if (this._form) this._form.hass = hass;
+      else this._draw();
+    }
+
+    _draw() {
+      if (!this._hass || !this._config) return;
+      if (!this._form) {
+        this._form = document.createElement("ha-form");
+        this._form.computeLabel = (s) => labels[s.name] || s.name;
+        this._form.addEventListener("value-changed", (ev) => {
+          const v = { ...ev.detail.value };
+          if (hasDays && v.days !== undefined) v.days = Number(v.days);
+          this._config = v;
+          this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: v }, bubbles: true, composed: true }));
+        });
+        this.appendChild(this._form);
+      }
+      this._form.hass = this._hass;
+      this._form.schema = schema;
+      this._form.data = hasDays
+        ? { ...defaults, ...this._config, days: String(this._config.days || defaults.days) }
+        : { ...defaults, ...this._config };
+    }
+  };
+}
+
+const LINKYPUISSANCECARD_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "power", selector: { entity: { domain: "sensor" } } },
+  { name: "subscribed", selector: { entity: { domain: "sensor" } } },
+  { name: "tarif", selector: { entity: { domain: "sensor" } } },
+  { name: "price", selector: { entity: { domain: "sensor" } } },
+  { name: "cost_rate", selector: { entity: { domain: "sensor" } } },
+  { name: "overrun", selector: { entity: { domain: "binary_sensor" } } },
+  { name: "overruns_day", selector: { entity: { domain: "sensor" } } },
+  { name: "show_peak", selector: { boolean: {} } },
+  THEME_SELECT,
+];
+const LinkyPuissanceCardEditor = makeEditor(LINKYPUISSANCECARD_SCHEMA, { title: "Titre", power: "Puissance instantanée (VA ou W)", subscribed: "Puissance souscrite (kVA)", tarif: "Poste Tempo en cours (ex. « HP BLEU »)", price: "Prix du kWh en cours", cost_rate: "Coût instantané (€/h)", overrun: "Dépassement de puissance (binary_sensor)", overruns_day: "Nombre de dépassements du jour", show_peak: "Afficher le pic du jour (statistiques HA)", theme: "Couleurs de la carte" }, LinkyPuissanceCard.DEFAULTS);
+const LINKYFACTURECARD_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "cycle_start", selector: { text: {} } },
+  { name: "cost_cycle", selector: { entity: { domain: "sensor" } } },
+  { name: "energy_cycle", selector: { entity: { domain: "sensor" } } },
+  { name: "cost_month", selector: { entity: { domain: "sensor" } } },
+  { name: "energy_month", selector: { entity: { domain: "sensor" } } },
+  { name: "cost_day", selector: { entity: { domain: "sensor" } } },
+  { name: "estimate_month", selector: { entity: { domain: "sensor" } } },
+  { name: "subscription_month", selector: { entity: {} } },
+  { name: "kwh_cycle", selector: { entity: { domain: "sensor" } } },
+  { name: "kwh_prev_cycle", selector: { entity: { domain: "sensor" } } },
+  { name: "kwh_month", selector: { entity: { domain: "sensor" } } },
+  { name: "kwh_day", selector: { entity: { domain: "sensor" } } },
+  { name: "budget_month", selector: { number: { min: 0, max: 1000, step: 1, mode: "box", unit_of_measurement: "€" } } },
+  THEME_SELECT,
+];
+const LinkyFactureCardEditor = makeEditor(LINKYFACTURECARD_SCHEMA, { title: "Titre", cycle_start: "Début du cycle de facturation (MM-JJ, ex. 10-01)", cost_cycle: "Coût total du cycle (abonnement compris)", energy_cycle: "Coût énergie du cycle", cost_month: "Coût total du mois", energy_month: "Coût énergie du mois", cost_day: "Coût total aujourd’hui", estimate_month: "Estimation du mois", subscription_month: "Abonnement mensuel", kwh_cycle: "Énergie du cycle (kWh)", kwh_prev_cycle: "Énergie du cycle précédent (kWh)", kwh_month: "Énergie du mois (kWh)", kwh_day: "Énergie aujourd’hui (kWh)", budget_month: "Budget mensuel (facultatif)", theme: "Couleurs de la carte" }, LinkyFactureCard.DEFAULTS);
+const LINKYTEMPOPOSTESCARD_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "period", selector: { select: { mode: "dropdown", options: [{ value: "jour", label: "Aujourd'hui" }, { value: "mois", label: "Ce mois" }, { value: "cycle", label: "Cycle" }] } } },
+  { name: "prefix", selector: { text: {} } },
+  { name: "suffix_day", selector: { text: {} } },
+  { name: "suffix_month", selector: { text: {} } },
+  { name: "suffix_cycle", selector: { text: {} } },
+  { name: "price_prefix", selector: { text: {} } },
+  { name: "tarif", selector: { entity: { domain: "sensor" } } },
+  THEME_SELECT,
+];
+const LinkyTempoPostesCardEditor = makeEditor(LINKYTEMPOPOSTESCARD_SCHEMA, { title: "Titre", period: "Onglet ouvert au chargement", prefix: "Préfixe des capteurs d’énergie", suffix_day: "Suffixe du jour", suffix_month: "Suffixe du mois", suffix_cycle: "Suffixe du cycle", price_prefix: "Préfixe des capteurs de prix", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPostesCard.DEFAULTS);
+const LINKYTEMPOPRIXCARD_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "price_prefix", selector: { text: {} } },
+  { name: "source_prefix", selector: { text: {} } },
+  { name: "fallback_prefix", selector: { text: {} } },
+  { name: "current", selector: { entity: { domain: "sensor" } } },
+  { name: "tarif", selector: { entity: { domain: "sensor" } } },
+  THEME_SELECT,
+];
+const LinkyTempoPrixCardEditor = makeEditor(LINKYTEMPOPRIXCARD_SCHEMA, { title: "Titre", price_prefix: "Préfixe des prix utilisés (<couleur>_<hc|hp>)", source_prefix: "Préfixe des prix MyElectricalData (<blue|white|red>_<hc|hp>)", fallback_prefix: "Préfixe des prix de secours", current: "Prix du kWh en cours", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPrixCard.DEFAULTS);
+const LINKYCYCLECARD_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "control", selector: { entity: { domain: "sensor" } } },
+  { name: "baseline_prefix", selector: { text: {} } },
+  { name: "cycle_prefix", selector: { text: {} } },
+  { name: "cycle_suffix", selector: { text: {} } },
+  { name: "total", selector: { entity: { domain: "sensor" } } },
+  { name: "archive", selector: { entity: {} } },
+  { name: "scripts", selector: { entity: { domain: "script", multiple: true } } },
+  { name: "automations", selector: { entity: { domain: "automation", multiple: true } } },
+  THEME_SELECT,
+];
+const LinkyCycleCardEditor = makeEditor(LINKYCYCLECARD_SCHEMA, { title: "Titre", control: "Contrôle des compteurs actifs", baseline_prefix: "Préfixe des baselines", cycle_prefix: "Préfixe des compteurs du cycle", cycle_suffix: "Suffixe des compteurs du cycle", total: "Énergie totale du cycle", archive: "Archive du cycle précédent", scripts: "Scripts proposés en boutons", automations: "Automatisations surveillées", theme: "Couleurs de la carte" }, LinkyCycleCard.DEFAULTS);
+
+/* ---------------------------------------------------------- enregistrement */
+
+if (typeof customElements !== "undefined") {
+  const define = (name, cls) => { if (!customElements.get(name)) customElements.define(name, cls); };
+  window.customCards = window.customCards || [];
+  const card = (type, name, description) => {
+    if (!window.customCards.some((c) => c.type === type)) window.customCards.push({ type, name, description, preview: true });
+  };
+  define("linky-puissance-card", LinkyPuissanceCard);
+  define("linky-puissance-card-editor", LinkyPuissanceCardEditor);
+  card("linky-puissance-card", "Carte Linky Puissance", "Puissance appelée en direct sur la puissance souscrite, coût en ce moment, pic et dépassements du jour.");
+  define("linky-facture-card", LinkyFactureCard);
+  define("linky-facture-card-editor", LinkyFactureCardEditor);
+  card("linky-facture-card", "Carte Linky Facture", "Coût du cycle de facturation, projection, mois en cours, estimation et comparaison avec le cycle précédent.");
+  define("linky-tempo-postes-card", LinkyTempoPostesCard);
+  define("linky-tempo-postes-card-editor", LinkyTempoPostesCardEditor);
+  card("linky-tempo-postes-card", "Carte Linky Tempo par poste", "Énergie et coût des 6 postes Tempo (Bleu, Blanc, Rouge × HC/HP) pour aujourd'hui, le mois et le cycle.");
+  define("linky-tempo-prix-card", LinkyTempoPrixCard);
+  define("linky-tempo-prix-card-editor", LinkyTempoPrixCardEditor);
+  card("linky-tempo-prix-card", "Carte Linky Prix Tempo", "Prix TTC des 6 postes Tempo, poste en cours et vérification de la source (MyElectricalData ou valeur de secours).");
+  define("linky-cycle-card", LinkyCycleCard);
+  define("linky-cycle-card-editor", LinkyCycleCardEditor);
+  card("linky-cycle-card", "Carte Linky Contrôle du cycle", "Baselines des compteurs Tempo, automatisations du cycle et scripts de maintenance (confirmation en 2 clics).");
+  console.info(`%c LINKY-ENERGIE-CARDS %c ${CARD_VERSION} `, "background:#96d21f;color:#1a2434;font-weight:700", "background:#1d93e3;color:#fff");
+}
+})();

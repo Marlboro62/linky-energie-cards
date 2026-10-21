@@ -1,0 +1,25 @@
+# Cartes Linky Énergie : les 5 cartes avec leurs entités par défaut.
+# Chaque carte s'utilise seule ; ne gardez que celles qui vous intéressent.
+# Si vos entités ont d'autres noms, ajoutez les options correspondantes (voir le README).
+type: vertical-stack
+cards:
+  - type: custom:linky-puissance-card
+    # subscribed: sensor.lixee_pref
+
+  - type: custom:linky-facture-card
+    cycle_start: "10-01"     # début du cycle de facturation (MM-JJ)
+    # budget_month: 80
+
+  - type: custom:linky-tempo-postes-card
+    period: mois             # jour, mois ou cycle
+
+  - type: custom:linky-tempo-prix-card
+
+  - type: custom:linky-cycle-card
+    scripts:
+      - script.tempo_nouveau_cycle
+      - script.tempo_recaler_cycle_01_10
+      - script.tempo_restaurer_compteurs
+    automations:
+      - automation.tempo_alerte_baselines_perdues
+      - automation.tempo_nouveau_cycle_de_facturation_1er_octobre
