@@ -30,11 +30,9 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 2. Ajoutez `https://github.com/Marlboro62/linky-energie-cards` avec le type **Tableau de bord** (Dashboard).
 3. Cherchez **Cartes Linky Énergie**, installez, puis rechargez la page (Ctrl+F5).
 
-> Tant qu'il n'existe qu'une version bêta, activez **Afficher les versions bêta** dans la fenêtre de téléchargement de HACS.
-
 ### Manuellement
 
-1. Téléchargez `linky-energie-cards.js` depuis les [releases](https://github.com/Marlboro62/linky-energie-cards/releases) et copiez-le dans `/config/www/`.
+1. Téléchargez `linky-energie-cards.js` depuis la [dernière release](https://github.com/Marlboro62/linky-energie-cards/releases/latest) et copiez-le dans `/config/www/`.
 2. **Paramètres → Tableaux de bord → ⋮ → Ressources → Ajouter une ressource** : URL `/local/linky-energie-cards.js`, type **Module JavaScript**.
 3. Rechargez la page (Ctrl+F5).
 
