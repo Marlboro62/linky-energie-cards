@@ -34,7 +34,7 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 
 ### Manuellement
 
-1. Téléchargez `linky-energie-cards.js` depuis la [dernière release](https://github.com/Marlboro62/linky-energie-cards/releases/latest) et copiez-le dans `/config/www/`.
+1. Téléchargez [`linky-energie-cards.js`](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/linky-energie-cards.js) (clic droit → Enregistrer sous) et copiez-le dans `/config/www/`.
 2. **Paramètres → Tableaux de bord → ⋮ → Ressources → Ajouter une ressource** : URL `/local/linky-energie-cards.js`, type **Module JavaScript**.
 3. Rechargez la page (Ctrl+F5).
 
