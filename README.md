@@ -29,11 +29,11 @@
 
 # Cartes Linky Énergie
 
-**Cinq cartes Lovelace indépendantes, dans un seul fichier**, pour suivre l'énergie d'un contrat **EDF Tempo** dans Home Assistant. Elles ont le style des cartes MyElectricalData new ([Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new)) : thème bleu nuit, version claire, ou thème Home Assistant.
+**Six cartes Lovelace indépendantes, dans un seul fichier**, pour suivre l'énergie d'un contrat **EDF Tempo** dans Home Assistant, et l'état des services Enedis. Elles ont le style des cartes MyElectricalData new ([Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new)) : thème bleu nuit, version claire, ou thème Home Assistant.
 
 Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez avec son propre type. Elles ne remplacent aucune autre carte.
 
-**[▶ Essayer la démo en ligne](https://marlboro62.github.io/linky-energie-cards/docs/demo.html)** : les 5 cartes avec des données simulées, thèmes clair et sombre, dépassement de puissance, écart de prix, compteurs incohérents… et la configuration YAML à copier.
+**[▶ Essayer la démo en ligne](https://marlboro62.github.io/linky-energie-cards/docs/demo.html)** : les 6 cartes avec des données simulées, thèmes clair et sombre, dépassement de puissance, écart de prix, compteurs incohérents, incident Enedis… et la configuration YAML à copier.
 
 | Type | Carte |
 | --- | --- |
@@ -42,6 +42,7 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 | `custom:linky-tempo-postes-card` | **Énergie par poste Tempo** : kWh, part, prix et coût des 6 postes, aujourd'hui, ce mois ou sur le cycle |
 | `custom:linky-tempo-prix-card` | **Prix Tempo** : prix TTC des 6 postes, poste en cours et vérification de la source des prix |
 | `custom:linky-cycle-card` | **Contrôle du cycle** : baselines des compteurs, automatisations et scripts de maintenance |
+| `custom:linky-enedis-status-card` | **État des services Enedis** : API Data Connect en service ou indisponibles, incident en cours (bêta) |
 
 | Puissance | Facture | Énergie par poste |
 | --- | --- | --- |
@@ -149,6 +150,41 @@ Sous chaque prix, la carte indique sa source : **MyElectricalData**, **valeur de
 La carte signale une baseline à 0 ou introuvable et un compteur de cycle négatif. Pendant le **premier mois du cycle** (cycle commençant le 1er), elle compare aussi chaque compteur du cycle à celui du mois : ils doivent être égaux, et un écart d'au moins 0,5 kWh révèle en général une baseline mal réglée. La valeur de `control` est affichée telle quelle. Le script de **nouveau cycle** n'est pas proposé par défaut : il remet le cycle à zéro et écrase l'archive, et l'automatisation du début de cycle le lance déjà. Ne l'ajoutez à `scripts:` qu'en connaissance de cause. Les boutons de scripts demandent une **confirmation en deux clics** (« Confirmer ? » pendant 5 secondes), car ces scripts modifient les compteurs.
 
 Un exemple avec les 5 cartes est dans [`exemples/cartes-energie.yaml`](exemples/cartes-energie.yaml).
+
+### État des services Enedis — `custom:linky-enedis-status-card`
+
+Affiche l'état des API **Enedis Data Connect de production**, celles qu'utilisent MyElectricalData et sa passerelle, tel que publié sur la page [État des services](https://datahub-enedis.fr/services-api/etat-des-services/) d'Enedis DataHub. Quand un service est indisponible, la carte affiche un bandeau « Incident Enedis en cours » : inutile alors de réinstaller ou de relancer MyElectricalData, les données reprendront seules.
+
+| Option | Rôle | Défaut |
+| --- | --- | --- |
+| `prefix` | Préfixe des capteurs d'état | `sensor.enedis_datahub_` |
+| `show_roles` | Rôle de chaque service sous son nom | `true` |
+| `show_link` | Lien vers la page Enedis | `true` |
+
+**Capteurs : intégration Scrape.** Un navigateur ne peut pas lire la page Enedis directement : Home Assistant la lit avec l'intégration native **Scrape**, sans code ni YAML.
+
+1. **Paramètres → Appareils et services → Ajouter une intégration → Scrape**.
+2. Ressource : `https://datahub-enedis.fr/services-api/etat-des-services/`, méthode `GET` (délai : 30 s).
+3. Ajoutez un capteur par service. Le sélecteur est toujours `.status-api` et l'attribut est `data-status` (dans les options avancées) :
+
+   | Nom du capteur | Index |
+   | --- | --- |
+   | `Enedis DataHub Authorize` | 8 |
+   | `Enedis DataHub Services souscrits` | 9 |
+   | `Enedis DataHub Mesures` | 10 |
+   | `Enedis DataHub Données générales` | 11 |
+   | `Enedis DataHub Alimentation` | 12 |
+   | `Enedis DataHub Situation contractuelle` | 13 |
+   | `Enedis DataHub Synthèse contractuelle` | 14 |
+   | `Enedis DataHub Situation comptage` | 15 |
+
+Chaque capteur vaut `up` ou `down`, et ses noms donnent les entités `sensor.enedis_datahub_…` que la carte trouve seule. Les index sont ceux de la page au 29/10/2026 (les index 0 à 7 sont l'environnement de test d'Enedis) : si Enedis réorganise sa page, par exemple au passage complet à Data Connect 2026, ils seront à ajuster.
+
+```yaml
+type: custom:linky-enedis-status-card
+```
+
+Les mêmes capteurs servent aussi à une automatisation, par exemple une notification quand `sensor.enedis_datahub_mesures` passe à `down`.
 
 ## Support
 

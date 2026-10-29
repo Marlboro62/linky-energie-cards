@@ -7,12 +7,13 @@
  *   custom:linky-tempo-postes-card  énergie et coût des 6 postes Tempo
  *   custom:linky-tempo-prix-card    prix Tempo et vérification de leur source
  *   custom:linky-cycle-card         contrôle des compteurs du cycle et scripts de maintenance
+ *   custom:linky-enedis-status-card état des services Enedis DataHub (Data Connect)
  *
  * Une seule ressource à ajouter ; chaque carte s'utilise seule. Aucune ne remplace une autre carte.
  */
 
 (() => {
-const CARD_VERSION = "0.1.0";
+const CARD_VERSION = "0.2.0-beta";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -86,7 +87,7 @@ const ago = (iso) => {
 
 const BRAND = `<svg viewBox="0 0 32 32" aria-hidden="true"><path class="house" d="M4 14.5 16 4l12 10.5V27a1.5 1.5 0 0 1-1.5 1.5h-5M10.5 28.5h-5A1.5 1.5 0 0 1 4 27V14.5"/><path class="bolt" d="M17.5 9 11 18h4.5l-1.5 8 7-10h-4.6z"/></svg>`;
 
-/** Base des cinq cartes : configuration, lecture des états, clics, rendu seulement quand une entité suivie change. */
+/** Base des cartes : configuration, lecture des états, clics, rendu seulement quand une entité suivie change. */
 class EnergyBase extends HTMLElement {
   static getStubConfig() {
     return {};
@@ -621,6 +622,116 @@ class LinkyCycleCard extends EnergyBase {
   }
 }
 
+/* ------------------------------------------------------- 6. état des services Enedis */
+
+/** Services Data Connect de production, dans l'ordre de la page Enedis : suffixe de l'entité, nom, rôle. */
+const ENEDIS_SERVICES = [
+  { k: "authorize", n: "Authorize", r: "Consentement, connexion au compte Enedis" },
+  { k: "services_souscrits", n: "Services souscrits", r: "Liste des services du compteur" },
+  { k: "mesures", n: "Mesures", r: "Consommation, production, courbe de charge" },
+  { k: "donnees_generales", n: "Données générales", r: "Adresse et caractéristiques du compteur" },
+  { k: "alimentation", n: "Alimentation", r: "Raccordement du point de livraison" },
+  { k: "situation_contractuelle", n: "Situation contractuelle", r: "Contrat en cours" },
+  { k: "synthese_contractuelle", n: "Synthèse contractuelle", r: "Puissance, date de mise en service" },
+  { k: "situation_comptage", n: "Situation comptage", r: "Heures creuses, comptage" },
+];
+const ENEDIS_PAGE = "https://datahub-enedis.fr/services-api/etat-des-services/";
+
+/** État d'un capteur : « up » / « down » (attribut data-status de la page Enedis), le reste est inconnu. */
+const enedisState = (st) => {
+  const v = String(st?.state ?? "").trim().toLowerCase();
+  if (v === "up" || v === "en service") return "up";
+  if (v === "down" || v.startsWith("indisponible")) return "down";
+  return "unknown";
+};
+
+class LinkyEnedisStatusCard extends EnergyBase {
+  static DEFAULTS = {
+    title: "État des services Enedis",
+    prefix: "sensor.enedis_datahub_",
+    show_roles: true,
+    show_link: true,
+    theme: "v2",
+  };
+
+  static getConfigElement() {
+    return document.createElement("linky-enedis-status-card-editor");
+  }
+
+  getCardSize() {
+    return 4;
+  }
+
+  /** Capteurs suivis : ceux du préfixe, services connus d'abord dans l'ordre de la page, puis les autres. */
+  _ids() {
+    const pre = this._config.prefix || "";
+    const found = pre ? Object.keys(this._hass?.states || {}).filter((id) => id.startsWith(pre)) : [];
+    const known = ENEDIS_SERVICES.map((s) => `${pre}${s.k}`).filter((id) => found.includes(id));
+    return [...known, ...found.filter((id) => !known.includes(id)).sort()];
+  }
+
+  _watch() {
+    return this._ids();
+  }
+
+  /** « Relevé il y a … » : redessiné au plus une fois par minute. */
+  _extraSig() {
+    return Math.floor(Date.now() / 60000);
+  }
+
+  _content() {
+    const c = this._config;
+    const ids = this._ids();
+    if (!ids.length) {
+      return {
+        sub: "Data Connect, API de production",
+        body: `<div class="en-alert warn"><ha-icon icon="mdi:alert-outline"></ha-icon><div><b>Aucun capteur trouvé</b> pour le préfixe
+          <code>${esc(c.prefix)}</code>. Créez les capteurs avec l'intégration Scrape (voir le README de la carte).</div></div>`,
+      };
+    }
+    const rows = ids.map((id) => {
+      const st = this._st(id);
+      const svc = ENEDIS_SERVICES.find((s) => `${c.prefix}${s.k}` === id);
+      const name = svc?.n || String(st?.attributes?.friendly_name || id).replace(/^Enedis DataHub\s*/i, "");
+      return { id, st, svc, name, state: enedisState(st) };
+    });
+    const down = rows.filter((r) => r.state === "down");
+    const unknown = rows.filter((r) => r.state === "unknown");
+    const up = rows.filter((r) => r.state === "up");
+    const seen = rows.map((r) => r.st?.last_reported || r.st?.last_updated).filter(Boolean).sort().pop();
+
+    const banner = down.length
+      ? `<div class="en-alert"><ha-icon icon="mdi:transmission-tower-off"></ha-icon><div><b>Incident Enedis en cours</b> :
+          ${down.map((r) => esc(r.name)).join(", ")} ${down.length > 1 ? "sont indisponibles" : "est indisponible"}.
+          Les données de MyElectricalData reprendront seules au retour du service.</div></div>`
+      : unknown.length === rows.length
+        ? `<div class="en-alert warn"><ha-icon icon="mdi:help-circle-outline"></ha-icon><div><b>État inconnu</b> : la page Enedis
+            n'a pas pu être lue. Vérifiez l'intégration Scrape.</div></div>`
+        : `<div class="en-ok"><ha-icon icon="mdi:check-circle-outline"></ha-icon><div><b>Tous les services sont en service.</b>
+            ${unknown.length ? `${unknown.length} état${unknown.length > 1 ? "s" : ""} inconnu${unknown.length > 1 ? "s" : ""}.` : ""}</div></div>`;
+
+    const ICON = { up: "mdi:check-circle", down: "mdi:close-circle", unknown: "mdi:help-circle-outline" };
+    const LABEL = { up: "En service", down: "Indisponible", unknown: "Inconnu" };
+    const list = rows.map((r) => `<div class="en-row st-${r.state}" data-entity="${esc(r.id)}">
+        <ha-icon icon="${ICON[r.state]}"></ha-icon>
+        <span>${esc(r.name)}${c.show_roles && r.svc ? `<small>${esc(r.svc.r)}</small>` : ""}</span>
+        <b>${LABEL[r.state]}</b>
+      </div>`).join("");
+
+    const pillCls = down.length ? "st-down" : unknown.length ? "st-unknown" : "st-up";
+    const right = `<div class="pill ${pillCls}"><span class="dot"></span><span class="pill-l">En service</span><span class="pill-v">${up.length}/${rows.length}</span></div>`;
+    const foot = `<div class="en-foot"><span>Relevé ${ago(seen)}</span>${c.show_link
+      ? `<a href="${ENEDIS_PAGE}" target="_blank" rel="noopener noreferrer">Page Enedis DataHub<ha-icon icon="mdi:open-in-new"></ha-icon></a>` : ""}</div>`;
+
+    return {
+      sub: "Data Connect, API de production",
+      right,
+      cls: down.length ? "en-over" : "",
+      body: `${banner}<div class="en-sec">${list}</div>${foot}`,
+    };
+  }
+}
+
 const EN_STYLE = `<style>
 ha-card { display: block; padding-bottom: 14px; }
 ha-card.en-over { border-color: var(--t-red); }
@@ -703,6 +814,15 @@ ha-card.light .t-white .dot { box-shadow: inset 0 0 0 1px #aab3c0; }
 .en-btn.armed ha-icon { color: #f0a33a; }
 .en-btn[disabled] { opacity: .6; cursor: default; }
 .en-btn:focus-visible { outline: 2px solid var(--med-blue); }
+.en-row.st-up ha-icon { color: var(--med-down); } .en-row.st-up b { color: var(--med-down); }
+.en-row.st-down ha-icon, .en-row.st-down b { color: var(--t-red); } .en-row.st-down { background: color-mix(in srgb, var(--t-red) 10%, transparent); }
+.en-row.st-unknown ha-icon, .en-row.st-unknown b { color: #f0a33a; }
+.pill.st-up .dot { background: var(--med-down); } .pill.st-down .dot { background: var(--t-red); } .pill.st-unknown .dot { background: #f0a33a; }
+.pill.st-down { border-color: var(--t-red); }
+.en-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 16px 0; font-size: .74rem; color: var(--med-muted); }
+.en-foot a { color: var(--med-blue); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.en-foot a ha-icon { --mdc-icon-size: 14px; }
+.en-alert code { font-size: .78rem; }
 </style>`;
 
 /* ------------------------------------------------------------------ style */
@@ -960,6 +1080,15 @@ const LINKYCYCLECARD_SCHEMA = [
 ];
 const LinkyCycleCardEditor = makeEditor(LINKYCYCLECARD_SCHEMA, { title: "Titre", control: "Contrôle des compteurs actifs", baseline_prefix: "Préfixe des baselines", cycle_prefix: "Préfixe des compteurs du cycle", cycle_suffix: "Suffixe des compteurs du cycle", total: "Énergie totale du cycle", archive: "Archive du cycle précédent", scripts: "Scripts proposés en boutons", automations: "Automatisations surveillées", cycle_start: "Début du cycle (MM-JJ), pour comparer au mois", month_prefix: "Préfixe des compteurs du mois", month_suffix: "Suffixe des compteurs du mois", theme: "Couleurs de la carte" }, LinkyCycleCard.DEFAULTS);
 
+const LINKYENEDISSTATUSCARD_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "prefix", selector: { text: {} } },
+  { name: "show_roles", selector: { boolean: {} } },
+  { name: "show_link", selector: { boolean: {} } },
+  THEME_SELECT,
+];
+const LinkyEnedisStatusCardEditor = makeEditor(LINKYENEDISSTATUSCARD_SCHEMA, { title: "Titre", prefix: "Préfixe des capteurs Scrape (ex. sensor.enedis_datahub_)", show_roles: "Afficher le rôle de chaque service", show_link: "Lien vers la page Enedis DataHub", theme: "Couleurs de la carte" }, LinkyEnedisStatusCard.DEFAULTS);
+
 /* ---------------------------------------------------------- enregistrement */
 
 if (typeof customElements !== "undefined") {
@@ -983,6 +1112,9 @@ if (typeof customElements !== "undefined") {
   define("linky-cycle-card", LinkyCycleCard);
   define("linky-cycle-card-editor", LinkyCycleCardEditor);
   card("linky-cycle-card", "Carte Linky Contrôle du cycle", "Baselines des compteurs Tempo, automatisations du cycle et scripts de maintenance (confirmation en 2 clics).");
+  define("linky-enedis-status-card", LinkyEnedisStatusCard);
+  define("linky-enedis-status-card-editor", LinkyEnedisStatusCardEditor);
+  card("linky-enedis-status-card", "Carte État des services Enedis", "État des API Enedis DataHub (Data Connect) : incident en cours, service par service, lien vers la page officielle.");
   console.info(`%c LINKY-ENERGIE-CARDS %c ${CARD_VERSION} `, "background:#96d21f;color:#1a2434;font-weight:700", "background:#1d93e3;color:#fff");
 }
 })();

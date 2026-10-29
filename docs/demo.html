@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cartes Linky Énergie · démo</title>
-<meta name="description" content="Démonstration des cinq cartes Lovelace Cartes Linky Énergie (puissance, facture, postes Tempo, prix Tempo, contrôle du cycle) avec des données simulées.">
+<meta name="description" content="Démonstration des six cartes Lovelace Cartes Linky Énergie (puissance, facture, postes Tempo, prix Tempo, contrôle du cycle, état des services Enedis) avec des données simulées.">
 <style>
   :root {
     --bg: #0f1724; --panel: #172133; --line: #2a3850; --text: #e7edf5; --muted: #8fa0b8;
@@ -96,7 +96,7 @@
       <h2>Carte</h2>
       <div class="ctl"><div class="seg" data-key="card">
         <button data-v="puissance">Puissance</button><button data-v="facture">Facture</button><button data-v="postes">Énergie par poste</button>
-        <button data-v="prix">Prix Tempo</button><button data-v="cycle">Contrôle du cycle</button><button data-v="all">Les 5</button></div></div>
+        <button data-v="prix">Prix Tempo</button><button data-v="cycle">Contrôle du cycle</button><button data-v="enedis">Services Enedis</button><button data-v="all">Les 6</button></div></div>
 
       <h2>Affichage</h2>
       <div class="ctl"><div class="ctl-l">Page</div><div class="seg" data-key="page">
@@ -122,6 +122,8 @@
         <button data-v="ok"><i class="sw green"></i>Concordante</button><button data-v="diff"><i class="sw orange"></i>Écart</button><button data-v="off"><i class="sw red"></i>Indisponible</button></div></div>
       <div class="ctl" data-for="cycle all"><div class="ctl-l">Compteurs du cycle</div><div class="seg" data-key="cycle">
         <button data-v="ok"><i class="sw green"></i>Cohérents</button><button data-v="gap"><i class="sw orange"></i>Écart avec le mois</button><button data-v="zero"><i class="sw red"></i>Baseline à 0</button></div></div>
+      <div class="ctl" data-for="enedis all"><div class="ctl-l">Services Enedis DataHub</div><div class="seg" data-key="enedis">
+        <button data-v="up"><i class="sw green"></i>En service</button><button data-v="incident"><i class="sw red"></i>Incident</button><button data-v="unknown"><i class="sw orange"></i>Page illisible</button></div></div>
     </aside>
 
     <main class="stage">
@@ -156,8 +158,10 @@
 
   const TYPES = {
     puissance: "linky-puissance-card", facture: "linky-facture-card", postes: "linky-tempo-postes-card",
-    prix: "linky-tempo-prix-card", cycle: "linky-cycle-card",
+    prix: "linky-tempo-prix-card", cycle: "linky-cycle-card", enedis: "linky-enedis-status-card",
   };
+  const ENEDIS = ["authorize", "services_souscrits", "mesures", "donnees_generales", "alimentation",
+    "situation_contractuelle", "synthese_contractuelle", "situation_comptage"];
   const POSTES = ["bleu_hc", "bleu_hp", "blanc_hc", "blanc_hp", "rouge_hc", "rouge_hp"];
   const EN = { bleu_hc: "blue_hc", bleu_hp: "blue_hp", blanc_hc: "white_hc", blanc_hp: "white_hp", rouge_hc: "red_hc", rouge_hp: "red_hp" };
   const PRIX = { bleu_hc: 0.1356, bleu_hp: 0.1654, blanc_hc: 0.1536, blanc_hp: 0.1921, rouge_hc: 0.1615, rouge_hp: 0.7295 };
@@ -168,7 +172,7 @@
   const BASE = { bleu_hc: 13958.9, bleu_hp: 11875.1, blanc_hc: 1900.8, blanc_hp: 1138.0, rouge_hc: 446.6, rouge_hp: 484.2 };
 
   const defaults = { card: "all", page: "dark", theme: "v2", width: "mobile", poste: "HP BLEU", load: "0.42", kva: "9",
-    budget: "none", period: "mois", prices: "ok", cycle: "ok" };
+    budget: "none", period: "mois", prices: "ok", cycle: "ok", enedis: "up" };
   let state = { ...defaults };
   try { state = { ...defaults, ...JSON.parse(localStorage.getItem("linky-energie-demo") || "{}") }; } catch (e) { /* ignoré */ }
 
@@ -217,6 +221,11 @@
       st[`input_number.baseline_${k}`] = S(state.cycle === "zero" && k === "blanc_hc" ? 0 : BASE[k], "kWh");
       st[`sensor.conso_${k}_cycle_en_cours`] = S(c, "kWh");
     }
+    const seen = new Date(Date.now() - 4 * 60e3).toISOString();
+    ENEDIS.forEach((k, i) => {
+      const v = state.enedis === "unknown" ? "unavailable" : state.enedis === "incident" && [2, 3, 6].includes(i) ? "down" : "up";
+      st[`sensor.enedis_datahub_${k}`] = { state: v, attributes: { friendly_name: `Enedis DataHub ${k}` }, last_changed: "demo", last_reported: seen };
+    });
     return st;
   }
 
@@ -228,6 +237,7 @@
       postes: { type: "custom:linky-tempo-postes-card", theme: t, period: state.period },
       prix: { type: "custom:linky-tempo-prix-card", theme: t },
       cycle: { type: "custom:linky-cycle-card", theme: t },
+      enedis: { type: "custom:linky-enedis-status-card", theme: t },
     };
     return state.card === "all" ? Object.values(c) : [c[state.card]];
   }
