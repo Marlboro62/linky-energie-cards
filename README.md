@@ -46,11 +46,11 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 
 | Puissance | Facture | Énergie par poste |
 | --- | --- | --- |
-| ![Puissance](images/puissance.png) | ![Facture](images/facture.png) | ![Énergie par poste](images/tempo-postes.png) |
+| ![Puissance](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/puissance.png) | ![Facture](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/facture.png) | ![Énergie par poste](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/tempo-postes.png) |
 
 | Prix Tempo | Contrôle du cycle | Facture (clair) |
 | --- | --- | --- |
-| ![Prix Tempo](images/tempo-prix.png) | ![Contrôle du cycle](images/cycle.png) | ![Facture claire](images/facture-clair.png) |
+| ![Prix Tempo](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/tempo-prix.png) | ![Contrôle du cycle](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/cycle.png) | ![Facture claire](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/facture-clair.png) |
 
 *Aperçus réalisés avec des valeurs fictives.*
 
@@ -149,7 +149,7 @@ Sous chaque prix, la carte indique sa source : **MyElectricalData**, **valeur de
 
 La carte signale une baseline à 0 ou introuvable et un compteur de cycle négatif. Pendant le **premier mois du cycle** (cycle commençant le 1er), elle compare aussi chaque compteur du cycle à celui du mois : ils doivent être égaux, et un écart d'au moins 0,5 kWh révèle en général une baseline mal réglée. La valeur de `control` est affichée telle quelle. Le script de **nouveau cycle** n'est pas proposé par défaut : il remet le cycle à zéro et écrase l'archive, et l'automatisation du début de cycle le lance déjà. Ne l'ajoutez à `scripts:` qu'en connaissance de cause. Les boutons de scripts demandent une **confirmation en deux clics** (« Confirmer ? » pendant 5 secondes), car ces scripts modifient les compteurs.
 
-Un exemple avec les 5 cartes est dans [`exemples/cartes-energie.yaml`](exemples/cartes-energie.yaml).
+Un exemple avec les 5 cartes est dans [`exemples/cartes-energie.yaml`](https://github.com/Marlboro62/linky-energie-cards/blob/main/exemples/cartes-energie.yaml).
 
 ### État des services Enedis — `custom:linky-enedis-status-card`
 
