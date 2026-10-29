@@ -221,10 +221,10 @@
       st[`input_number.baseline_${k}`] = S(state.cycle === "zero" && k === "blanc_hc" ? 0 : BASE[k], "kWh");
       st[`sensor.conso_${k}_cycle_en_cours`] = S(c, "kWh");
     }
-    const seen = new Date(Date.now() - 4 * 60e3).toISOString();
+    const seen = new Date(Date.now() - 4 * 60e3).toISOString(); // incident ou page illisible : changement récent
     ENEDIS.forEach((k, i) => {
       const v = state.enedis === "unknown" ? "unavailable" : state.enedis === "incident" && [2, 3, 6].includes(i) ? "down" : "up";
-      st[`sensor.enedis_datahub_${k}`] = { state: v, attributes: { friendly_name: `Enedis DataHub ${k}` }, last_changed: "demo", last_reported: seen };
+      st[`sensor.enedis_datahub_${k}`] = { state: v, attributes: { friendly_name: `Enedis DataHub ${k}` }, last_changed: state.enedis === "up" ? "2026-10-29T06:12:00+01:00" : seen };
     });
     return st;
   }

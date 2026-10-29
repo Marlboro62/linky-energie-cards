@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.2.0";
+const CARD_VERSION = "0.2.1-beta";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -645,6 +645,14 @@ const enedisState = (st) => {
   return "unknown";
 };
 
+/** Heure d'un changement : « 16:06 » aujourd'hui, « 28/10 à 16:06 » avant. */
+const sinceTime = (iso) => {
+  if (!iso) return "—";
+  const d = new Date(iso);
+  const hm = d.toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+  return d.toDateString() === new Date().toDateString() ? hm : `${d.toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit" })} à ${hm}`;
+};
+
 class LinkyEnedisStatusCard extends EnergyBase {
   static DEFAULTS = {
     title: "État des services Enedis",
@@ -674,11 +682,6 @@ class LinkyEnedisStatusCard extends EnergyBase {
     return this._ids();
   }
 
-  /** « Relevé il y a … » : redessiné au plus une fois par minute. */
-  _extraSig() {
-    return Math.floor(Date.now() / 60000);
-  }
-
   _content() {
     const c = this._config;
     const ids = this._ids();
@@ -698,7 +701,9 @@ class LinkyEnedisStatusCard extends EnergyBase {
     const down = rows.filter((r) => r.state === "down");
     const unknown = rows.filter((r) => r.state === "unknown");
     const up = rows.filter((r) => r.state === "up");
-    const seen = rows.map((r) => r.st?.last_reported || r.st?.last_updated).filter(Boolean).sort().pop();
+    // Home Assistant ne réécrit pas un capteur Scrape dont la valeur ne change pas : seule l'heure du
+    // dernier changement d'état est fiable (last_reported et last_updated n'indiquent pas la dernière lecture).
+    const changed = rows.map((r) => r.st?.last_changed).filter((t) => t && !Number.isNaN(Date.parse(t))).sort().pop();
 
     const banner = down.length
       ? `<div class="en-alert"><ha-icon icon="mdi:transmission-tower-off"></ha-icon><div><b>Incident Enedis en cours</b> :
@@ -720,7 +725,7 @@ class LinkyEnedisStatusCard extends EnergyBase {
 
     const pillCls = down.length ? "st-down" : unknown.length ? "st-unknown" : "st-up";
     const right = `<div class="pill ${pillCls}"><span class="dot"></span><span class="pill-l">En service</span><span class="pill-v">${up.length}/${rows.length}</span></div>`;
-    const foot = `<div class="en-foot"><span>Relevé ${ago(seen)}</span>${c.show_link
+    const foot = `<div class="en-foot"><span>Dernier changement : ${sinceTime(changed)}</span>${c.show_link
       ? `<a href="${ENEDIS_PAGE}" target="_blank" rel="noopener noreferrer">Page Enedis DataHub<ha-icon icon="mdi:open-in-new"></ha-icon></a>` : ""}</div>`;
 
     return {
@@ -1114,7 +1119,7 @@ if (typeof customElements !== "undefined") {
   card("linky-cycle-card", "Carte Linky Contrôle du cycle", "Baselines des compteurs Tempo, automatisations du cycle et scripts de maintenance (confirmation en 2 clics).");
   define("linky-enedis-status-card", LinkyEnedisStatusCard);
   define("linky-enedis-status-card-editor", LinkyEnedisStatusCardEditor);
-  card("linky-enedis-status-card", "Carte État des services Enedis", "État des API Enedis DataHub (Data Connect) : incident en cours, service par service, lien vers la page officielle.");
+  card("linky-enedis-status-card", "Carte État des services Enedis", "État des API Enedis DataHub (Data Connect) : incident en cours, service par service, heure du dernier changement, lien vers la page officielle.");
   console.info(`%c LINKY-ENERGIE-CARDS %c ${CARD_VERSION} `, "background:#96d21f;color:#1a2434;font-weight:700", "background:#1d93e3;color:#fff");
 }
 })();
