@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.2.1-beta";
+const CARD_VERSION = "0.2.2";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -415,6 +415,7 @@ class LinkyTempoPostesCard extends EnergyBase {
     suffix_month: "_energie_ce_mois",
     suffix_cycle: "_energie_cette_annee",
     price_prefix: "sensor.tempo_prix_",
+    source_prefix: "sensor.myelectricaldata_tempo_price_", // prix de MyElectricalData, si les prix utilisés n'existent pas
     tarif: "sensor.lixee_current_price",
     theme: "v2",
   };
@@ -433,7 +434,7 @@ class LinkyTempoPostesCard extends EnergyBase {
 
   _watch() {
     const c = this._config;
-    return [c.tarif, ...POSTES.flatMap((p) => [`${c.price_prefix}${p.k}`, ...PERIODS.map((x) => `${c.prefix}${p.k}${c[x.cfg]}`)])];
+    return [c.tarif, ...POSTES.flatMap((p) => [`${c.price_prefix}${p.k}`, `${c.source_prefix}${p.en}`, ...PERIODS.map((x) => `${c.prefix}${p.k}${c[x.cfg]}`)])];
   }
 
   _content() {
@@ -443,7 +444,7 @@ class LinkyTempoPostesCard extends EnergyBase {
     const rows = POSTES.map((p) => {
       const id = `${c.prefix}${p.k}${c[per.cfg]}`;
       const kwh = this._num(id);
-      const price = this._num(`${c.price_prefix}${p.k}`);
+      const price = this._num(`${c.price_prefix}${p.k}`) ?? this._num(`${c.source_prefix}${p.en}`);
       return { p, id, kwh, price, cost: kwh !== null && price !== null ? kwh * price : null };
     });
     const sumK = rows.reduce((a, r) => a + (r.kwh || 0), 0);
@@ -498,10 +499,15 @@ class LinkyTempoPrixCard extends EnergyBase {
     const cur = currentPoste(this._st(c.tarif)?.state);
     const same = (a, b) => a !== null && b !== null && Math.abs(a - b) < 0.00005;
     let issues = 0;
+    // prix affiché : capteur des prix utilisés s'il existe, sinon MyElectricalData, sinon la valeur de secours
+    const shown = (p) => {
+      const used = this._num(`${c.price_prefix}${p.k}`), med = this._num(`${c.source_prefix}${p.en}`), fb = this._num(`${c.fallback_prefix}${p.k}`);
+      return used !== null ? [used, `${c.price_prefix}${p.k}`] : med !== null ? [med, `${c.source_prefix}${p.en}`] : fb !== null ? [fb, `${c.fallback_prefix}${p.k}`] : [null, `${c.price_prefix}${p.k}`];
+    };
     const cell = (p) => {
-      const used = this._num(`${c.price_prefix}${p.k}`);
       const med = this._num(`${c.source_prefix}${p.en}`);
       const fb = this._num(`${c.fallback_prefix}${p.k}`);
+      const [used, usedId] = shown(p);
       let src = "";
       let bad = false;
       if (same(used, med)) src = `<span class="src ok">MyElectricalData</span>`;
@@ -510,14 +516,14 @@ class LinkyTempoPrixCard extends EnergyBase {
       if (med !== null && fb !== null && !same(med, fb)) bad = true;
       if (bad) issues++;
       const diff = med !== null && fb !== null && !same(med, fb) ? `<div class="pdiff">MyElectricalData ${priceFmt(med)} · secours ${priceFmt(fb)}</div>` : "";
-      return `<div class="pcell ${TEMPO[p.c].cls} ${p.k === cur ? "cur" : ""} ${bad ? "bad" : ""}" data-entity="${esc(`${c.price_prefix}${p.k}`)}">
+      return `<div class="pcell ${TEMPO[p.c].cls} ${p.k === cur ? "cur" : ""} ${bad ? "bad" : ""}" data-entity="${esc(usedId)}">
         <div class="pcell-h"><span class="dot"></span>${p.h}${p.k === cur ? '<span class="now">en cours</span>' : ""}</div>
         <div class="pcell-v">${used !== null ? fmt(used, 4) : "—"}<span>€/kWh</span></div>
         ${src}${diff}
       </div>`;
     };
     const cols = ["blue", "white", "red"].map((col) => `<div class="pcol"><div class="pcol-h">${TEMPO[col].label}</div>${POSTES.filter((p) => p.c === col).map(cell).join("")}</div>`).join("");
-    const vals = POSTES.map((p) => this._num(`${c.price_prefix}${p.k}`));
+    const vals = POSTES.map((p) => shown(p)[0]);
     const min = Math.min(...vals.filter((v) => v !== null));
     const max = Math.max(...vals.filter((v) => v !== null));
     const now = this._num(c.current);
@@ -1054,10 +1060,11 @@ const LINKYTEMPOPOSTESCARD_SCHEMA = [
   { name: "suffix_month", selector: { text: {} } },
   { name: "suffix_cycle", selector: { text: {} } },
   { name: "price_prefix", selector: { text: {} } },
+  { name: "source_prefix", selector: { text: {} } },
   { name: "tarif", selector: { entity: { domain: "sensor" } } },
   THEME_SELECT,
 ];
-const LinkyTempoPostesCardEditor = makeEditor(LINKYTEMPOPOSTESCARD_SCHEMA, { title: "Titre", period: "Onglet ouvert au chargement", prefix: "Préfixe des capteurs d’énergie", suffix_day: "Suffixe du jour", suffix_month: "Suffixe du mois", suffix_cycle: "Suffixe du cycle", price_prefix: "Préfixe des capteurs de prix", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPostesCard.DEFAULTS);
+const LinkyTempoPostesCardEditor = makeEditor(LINKYTEMPOPOSTESCARD_SCHEMA, { title: "Titre", period: "Onglet ouvert au chargement", prefix: "Préfixe des capteurs d’énergie", suffix_day: "Suffixe du jour", suffix_month: "Suffixe du mois", suffix_cycle: "Suffixe du cycle", price_prefix: "Préfixe des capteurs de prix", source_prefix: "Préfixe des prix MyElectricalData, si les prix ci-dessus n’existent pas (<blue|white|red>_<hc|hp>)", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPostesCard.DEFAULTS);
 const LINKYTEMPOPRIXCARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
   { name: "price_prefix", selector: { text: {} } },

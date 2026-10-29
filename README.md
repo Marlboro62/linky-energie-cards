@@ -117,6 +117,7 @@ La **projection** ramène le coût du cycle à 365 jours **au rythme actuel**. E
 | `prefix` | Préfixe des capteurs d'énergie | `sensor.tempo_` |
 | `suffix_day` / `suffix_month` / `suffix_cycle` | Suffixes par période | `_energie_aujourdhui` / `_energie_ce_mois` / `_energie_cette_annee` |
 | `price_prefix` | Préfixe des prix par poste | `sensor.tempo_prix_` |
+| `source_prefix` | Prix de MyElectricalData, utilisés quand les prix ci-dessus n'existent pas | `sensor.myelectricaldata_tempo_price_` |
 | `tarif` | Poste en cours (mis en évidence) | `sensor.lixee_current_price` |
 
 Le coût affiché est l'énergie du poste multipliée par son **prix actuel**, hors abonnement.
@@ -130,6 +131,8 @@ Le coût affiché est l'énergie du poste multipliée par son **prix actuel**, h
 | `fallback_prefix` | Prix de secours | `input_number.tempo_tarif_` |
 | `current` | Prix du kWh en cours | `sensor.tempo_tarif_ttc_actuel` |
 | `tarif` | Poste en cours | `sensor.lixee_current_price` |
+
+**Avec MyElectricalData seul**, sans capteurs de prix à vous, la carte affiche directement les prix publiés par MyElectricalData (et la valeur de secours si MyElectricalData n'en publie pas) : il n'y a rien à créer.
 
 Sous chaque prix, la carte indique sa source : **MyElectricalData**, **valeur de secours** ou **autre source**. Elle affiche une alerte si la source MyElectricalData est indisponible ou si elle diffère de la valeur de secours, ce qui signale en général un changement de tarif à reporter.
 
