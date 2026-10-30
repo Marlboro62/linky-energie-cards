@@ -142,7 +142,7 @@ energy_hp_annee: sensor.conso_hp_annee
 
 - **Cycle** : énergie consommée **depuis `cycle_start`**, lue dans les statistiques longue durée de Home Assistant, poste par poste. Source, dans l'ordre :
   1. `energy_hc_index` / `energy_hp_index` (ou `energy_base_index`) : capteurs d'index du compteur, si vous les indiquez ;
-  2. sinon, les capteurs du **tableau de bord Énergie** (réglages Énergie, réseau), reconnus HC et HP à leur nom : la carte retrouve alors le même total que le tableau de bord ;
+  2. sinon, les capteurs du **tableau de bord Énergie** (réglages Énergie, réseau), reconnus HC et HP à leur nom (HC/HP, HCHC/HCHP de la téléinfo, creuses/pleines), en Wh comme en kWh : la carte retrouve alors le même total que le tableau de bord ;
   3. sinon, les capteurs `…_annee`, peu importe leur date de remise à zéro, mais seulement depuis la création de leurs statistiques.
   Le coût est compté au prix de chaque poste, plus l'abonnement au prorata des jours écoulés.
 - **Cycle précédent** : calculé de la même façon si `kwh_prev_cycle` n'est pas renseigné, et seulement si les statistiques couvrent tout le cycle précédent.

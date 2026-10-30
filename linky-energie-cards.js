@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.3.0-beta.10";
+const CARD_VERSION = "0.3.0-beta.11";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -448,8 +448,9 @@ class LinkyFactureCard extends EnergyBase {
     const found = { ...own };
     if (c.contract === "base") { if (!found.base && ids.length === 1) found.base = ids[0]; }
     else {
-      found.hc ||= ids.find((id) => /(^|[^a-z])hc([^a-z]|$)|creuse|off.?peak/.test(label(id)));
-      found.hp ||= ids.find((id) => id !== found.hc && (/(^|[^a-z])hp([^a-z]|$)|pleine/.test(label(id)) || (/peak/.test(label(id)) && !/off.?peak/.test(label(id)))));
+      // téléinfo historique : HCHC = heures creuses, HCHP = heures pleines
+      found.hc ||= ids.find((id) => /hchc|(^|[^a-z])hc([^a-z]|$)|creuse|off.?peak/.test(label(id)));
+      found.hp ||= ids.find((id) => id !== found.hc && (/hchp|(^|[^a-z])hp([^a-z]|$)|pleine/.test(label(id)) || (/peak/.test(label(id)) && !/off.?peak/.test(label(id)))));
     }
     return postes.every((k) => found[k]) ? found : null;
   }
@@ -470,7 +471,7 @@ class LinkyFactureCard extends EnergyBase {
       if (ids.length) {
         const cy = this._cycle();
         const prevStart = new Date(cy.start.getFullYear() - 1, cy.start.getMonth(), cy.start.getDate());
-        const ask = (start, end) => this._hass.callWS({ type: "recorder/statistics_during_period", start_time: start.toISOString(), end_time: end.toISOString(), statistic_ids: ids, period: "day", types: ["change"] });
+        const ask = (start, end) => this._hass.callWS({ type: "recorder/statistics_during_period", start_time: start.toISOString(), end_time: end.toISOString(), statistic_ids: ids, period: "day", types: ["change"], units: { energy: "kWh" } }); // index souvent en Wh
         const [cur, old] = await Promise.all([ask(cy.start, new Date()), ask(prevStart, cy.start)]);
         const sum = (rows) => { let t = null; for (const r of rows || []) if (Number.isFinite(r.change)) t = (t || 0) + r.change; return t; };
         // le cycle précédent ne compte que si les statistiques le couvrent en entier (sinon il serait faux)
