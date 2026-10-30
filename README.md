@@ -141,6 +141,7 @@ price_base: 0.1940
 ```
 
 - **Énergie par poste** lit la consommation de l'**export Home Assistant de MyElectricalData** (`sensor.myelectricaldata_linky_<pdl>_consumption_this_month_hc`…), trouvée toute seule : onglets **Hier**, **Semaine**, **Ce mois** et **Cette année**, avec le coût de chaque poste au prix saisi. En Base, la carte additionne les capteurs HC et HP de l'export s'il n'y a pas de capteur Base. D'autres capteurs : option `energy_prefix` (le préfixe avant `this_month_hc`).
+- **Vos propres capteurs** (utility_meter, Lixee, téléinfo…) : dans l'éditeur, la section dépliable **Mes capteurs de consommation** propose un capteur HC et un capteur HP (ou Base) pour **Aujourd'hui**, **Hier**, **Semaine**, **Ce mois** et **Cette année**. Seules les périodes renseignées ont un onglet. En YAML : `energy_hc_jour`, `energy_hp_jour`, `energy_hc_mois`, `energy_hp_mois`… (`energy_<hc|hp|base>_<jour|hier|semaine|mois|annee>`).
 - **Prix** affiche le prix de chaque poste, le poste en cours et l'écart entre heures pleines et heures creuses.
 - **Puissance** prend le prix du poste en cours (HC ou HP d'après le PTEC, ou Base) pour la pastille kWh et le coût en ce moment.
 - **Poste en cours** (HC ou HP) : capteur `tarif`, sinon la carte cherche seule un capteur PTEC (téléinfo en mode historique : `sensor.…_ptec`) ou de période tarifaire.
