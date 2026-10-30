@@ -95,7 +95,10 @@ Toutes les cartes acceptent `title` et `theme` (`v2` bleu nuit MyElectricalData,
 | `subscribed` | Puissance souscrite : capteur en kVA, en VA, ou **ISOUSC en ampères** (mode historique : 45 A = 9 kVA) | `sensor.lixee_pref` |
 | `subscribed_kva` | Puissance souscrite saisie en kVA, si aucun capteur ne la donne (ex. `9`) | — |
 | `tarif` | Période tarifaire en cours : poste Tempo (« HP BLEU ») ou **PTEC** (« HC.. », « HP.. ») ; sans ce capteur, un capteur `…_ptec` ou de période tarifaire est trouvé seul | `sensor.lixee_current_price` |
-| `price` | Prix du kWh en cours | `sensor.tempo_tarif_ttc_actuel` |
+| `contract` | `tempo`, `hchp` (heures creuses / heures pleines) ou `base` : choisit le prix du kWh en cours | `tempo` |
+| `price_hc`, `price_hp` | Contrat HC/HP : prix TTC du kWh, nombre ou entité ; le poste en cours vient de `tarif` (PTEC) | — |
+| `price_base` | Contrat Base : prix TTC du kWh, nombre ou entité | — |
+| `price` | Prix du kWh en cours (capteur), utilisé si aucun prix n'est saisi ci-dessus | `sensor.tempo_tarif_ttc_actuel` |
 | `cost_rate` | Coût instantané (€/h). Sans lui, estimé avec puissance × prix | `sensor.tempo_total_instantane` |
 | `overrun` | Dépassement en cours (`binary_sensor`) | `binary_sensor.linky_depassement_puissance` |
 | `overruns_day` | Nombre de dépassements du jour | `sensor.linky_depassements_jour` |
@@ -121,7 +124,7 @@ La **projection** ramène le coût du cycle à 365 jours **au rythme actuel**. E
 
 ### Contrats heures creuses / heures pleines et Base
 
-Les cartes **Énergie par poste** et **Prix** fonctionnent aussi avec un contrat **heures creuses / heures pleines** ou **Base** (Tarif Bleu ou offre de marché) : choisissez le contrat dans l'éditeur (`contract`) et saisissez le prix TTC du kWh.
+Les cartes **Énergie par poste**, **Prix** et **Puissance** fonctionnent aussi avec un contrat **heures creuses / heures pleines** ou **Base** (Tarif Bleu ou offre de marché) : choisissez le contrat dans l'éditeur (`contract`) et saisissez le prix TTC du kWh.
 
 ```yaml
 type: custom:linky-tempo-postes-card
@@ -138,6 +141,7 @@ price_base: 0.1940
 
 - **Énergie par poste** lit la consommation de l'**export Home Assistant de MyElectricalData** (`sensor.myelectricaldata_linky_<pdl>_consumption_this_month_hc`…), trouvée toute seule : onglets **Hier**, **Semaine**, **Ce mois** et **Cette année**, avec le coût de chaque poste au prix saisi. En Base, la carte additionne les capteurs HC et HP de l'export s'il n'y a pas de capteur Base. D'autres capteurs : option `energy_prefix` (le préfixe avant `this_month_hc`).
 - **Prix** affiche le prix de chaque poste, le poste en cours et l'écart entre heures pleines et heures creuses.
+- **Puissance** prend le prix du poste en cours (HC ou HP d'après le PTEC, ou Base) pour la pastille kWh et le coût en ce moment.
 - **Poste en cours** (HC ou HP) : capteur `tarif`, sinon la carte cherche seule un capteur PTEC (téléinfo en mode historique : `sensor.…_ptec`) ou de période tarifaire.
 - Dans l'**éditeur visuel**, choisir le contrat affiche les champs de ce contrat : prix HC et HP, ou prix Base ; les préfixes des capteurs Tempo disparaissent.
 

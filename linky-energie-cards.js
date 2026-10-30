@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.3.0-beta.4";
+const CARD_VERSION = "0.3.0-beta.5";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -224,8 +224,12 @@ class LinkyPuissanceCard extends EnergyBase {
     power: "sensor.lixee_sinsts",
     subscribed: "sensor.lixee_pref",
     subscribed_kva: "", // puissance souscrite saisie (kVA), si aucun capteur ne la donne
+    contract: "tempo", // tempo, hchp ou base : choisit le prix du kWh en cours
     tarif: "sensor.lixee_current_price",
     price: "sensor.tempo_tarif_ttc_actuel",
+    price_hc: "", // HC/HP : prix TTC du kWh (nombre ou entité)
+    price_hp: "",
+    price_base: "", // Base : prix TTC du kWh (nombre ou entité)
     cost_rate: "sensor.tempo_total_instantane",
     overrun: "binary_sensor.linky_depassement_puissance",
     overruns_day: "sensor.linky_depassements_jour",
@@ -239,7 +243,18 @@ class LinkyPuissanceCard extends EnergyBase {
 
   _watch() {
     const c = this._config;
-    return [c.power, c.subscribed, c.tarif, c.price, c.cost_rate, c.overrun, c.overruns_day].filter(Boolean);
+    return [c.power, c.subscribed, c.tarif, c.price, c.cost_rate, c.overrun, c.overruns_day, c.price_hc, c.price_hp, c.price_base]
+      .filter((x) => typeof x === "string" && x.includes("."));
+  }
+
+  /** Prix du kWh en cours : celui du poste HC ou HP (PTEC), ou de la Base, sinon le capteur « price ». */
+  _currentPrice() {
+    const c = this._config;
+    const key = c.contract === "hchp" ? currentHcHp(this._st(this._tarif(c.tarif))?.state) : c.contract === "base" ? "base" : null;
+    const opt = key ? c[`price_${key}`] : null;
+    const v = priceOpt(this, opt);
+    if (v !== null) return { v, id: typeof opt === "string" && opt.includes(".") ? opt : "" };
+    return { v: this._num(c.price), id: c.price };
   }
 
   _extraSig() {
@@ -300,7 +315,7 @@ class LinkyPuissanceCard extends EnergyBase {
     const lvl = pct === null ? "" : pct >= 90 ? "b-alert" : pct >= 70 ? "b-warn" : "b-ok";
     const over = this._st(c.overrun)?.state === "on";
     const nOver = this._num(c.overruns_day);
-    const price = this._num(c.price);
+    const { v: price, id: priceId } = this._currentPrice();
     const rate = this._num(c.cost_rate);
     const rateUnit = this._unit(c.cost_rate, "€/h");
     const estRate = va !== null && price !== null ? (va / 1000) * price : null;
@@ -316,11 +331,11 @@ class LinkyPuissanceCard extends EnergyBase {
         <div class="g-n"><span class="g-k"><b>${fmt(pct, 0)} %</b> de la puissance souscrite</span><span>${fmt(subVA / 1000, subVA % 1000 ? 1 : 0)} kVA</span></div>` : ""}
       </div>
       <div class="tiles en-tiles">
-        ${rate !== null || estRate !== null ? `<div class="tile" data-entity="${esc(rate !== null ? c.cost_rate : c.price)}"><div class="tile-l">Coût en ce moment</div><div class="tile-v">${eur(rate ?? estRate)}<span>${esc(rate !== null ? String(rateUnit).replace("€", "").trim() : "/h")}</span></div><div class="tile-n">${rate === null ? "estimé : puissance × prix du kWh" : `≈ ${eur((rate ?? 0) * 24)} sur 24 h à ce rythme`}</div></div>` : ""}
+        ${rate !== null || estRate !== null ? `<div class="tile" data-entity="${esc(rate !== null ? c.cost_rate : priceId)}"><div class="tile-l">Coût en ce moment</div><div class="tile-v">${eur(rate ?? estRate)}<span>${esc(rate !== null ? String(rateUnit).replace("€", "").trim() : "/h")}</span></div><div class="tile-n">${rate === null ? "estimé : puissance × prix du kWh" : `≈ ${eur((rate ?? 0) * 24)} sur 24 h à ce rythme`}</div></div>` : ""}
         ${peak ? `<div class="tile" data-entity="${esc(c.power)}"><div class="tile-l">Pic du jour</div><div class="tile-v">${fmt(peak.v, 0)}<span>${esc(unit)}</span></div><div class="tile-n">à ${new Date(peak.t).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}${peakPct !== null ? ` · ${fmt(peakPct, 0)} %` : ""}</div></div>` : ""}
         ${nOver !== null ? `<div class="tile ${nOver > 0 ? "t-warn" : ""}" data-entity="${esc(c.overruns_day)}"><div class="tile-l">Dépassements aujourd'hui</div><div class="tile-v">${fmt(nOver, 0)}</div><div class="tile-n">${nOver > 0 ? "pensez à décaler les gros appareils" : "aucun"}</div></div>` : ""}
       </div>`;
-    const right = this._postePill(c.tarif) + (price !== null ? `<div class="pill" data-entity="${esc(c.price)}"><span class="pill-l">kWh</span><span class="pill-v">${priceFmt(price)}</span></div>` : "");
+    const right = this._postePill(c.tarif) + (price !== null ? `<div class="pill" data-entity="${esc(priceId)}"><span class="pill-l">kWh</span><span class="pill-v">${priceFmt(price)}</span></div>` : "");
     return { sub: "En direct, compteur Linky", right, body, cls: over ? "en-over" : "" };
   }
 }
@@ -1327,12 +1342,16 @@ function makeEditor(schemaOf, labels, defaults) {
   };
 }
 
-const LINKYPUISSANCECARD_SCHEMA = [
+const LINKYPUISSANCECARD_FIELDS = [
   { name: "title", selector: { text: {} } },
+  { name: "contract", selector: { select: { mode: "dropdown", options: [{ value: "tempo", label: "Tempo" }, { value: "hchp", label: "Heures creuses / heures pleines" }, { value: "base", label: "Base" }] } } },
   { name: "power", selector: { entity: { domain: "sensor" } } },
   { name: "subscribed", selector: { entity: { domain: "sensor" } } },
   { name: "subscribed_kva", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
   { name: "tarif", selector: { entity: { domain: "sensor" } } },
+  { name: "price_hc", selector: { text: {} } },
+  { name: "price_hp", selector: { text: {} } },
+  { name: "price_base", selector: { text: {} } },
   { name: "price", selector: { entity: { domain: "sensor" } } },
   { name: "cost_rate", selector: { entity: { domain: "sensor" } } },
   { name: "overrun", selector: { entity: { domain: "binary_sensor" } } },
@@ -1340,7 +1359,13 @@ const LINKYPUISSANCECARD_SCHEMA = [
   { name: "show_peak", selector: { boolean: {} } },
   THEME_SELECT,
 ];
-const LinkyPuissanceCardEditor = makeEditor(LINKYPUISSANCECARD_SCHEMA, { title: "Titre", power: "Puissance instantanée (VA ou W)", subscribed: "Puissance souscrite : capteur en kVA, ou ISOUSC en ampères (mode historique)", subscribed_kva: "Puissance souscrite saisie (kVA), si aucun capteur ne la donne", tarif: "Période tarifaire en cours : poste Tempo (« HP BLEU ») ou PTEC (« HC.. »), trouvée seule sinon", price: "Prix du kWh en cours", cost_rate: "Coût instantané (€/h)", overrun: "Dépassement de puissance (binary_sensor)", overruns_day: "Nombre de dépassements du jour", show_peak: "Afficher le pic du jour (statistiques HA)", theme: "Couleurs de la carte" }, LinkyPuissanceCard.DEFAULTS);
+// Puissance : prix HC et HP en option HC/HP, prix Base en option Base
+const LINKYPUISSANCECARD_SCHEMA = (cfg) => {
+  const k = CONTRACTS[cfg?.contract] ? cfg.contract : "tempo";
+  const hide = k === "tempo" ? ["price_hc", "price_hp", "price_base"] : k === "hchp" ? ["price_base"] : ["price_hc", "price_hp"];
+  return LINKYPUISSANCECARD_FIELDS.filter((f) => !hide.includes(f.name));
+};
+const LinkyPuissanceCardEditor = makeEditor(LINKYPUISSANCECARD_SCHEMA, { title: "Titre", power: "Puissance instantanée (VA ou W)", subscribed: "Puissance souscrite : capteur en kVA, ou ISOUSC en ampères (mode historique)", subscribed_kva: "Puissance souscrite saisie (kVA), si aucun capteur ne la donne", contract: "Contrat", tarif: "Période tarifaire en cours : poste Tempo (« HP BLEU ») ou PTEC (« HC.. »), trouvée seule sinon", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", price: "Prix du kWh en cours (capteur), utilisé si aucun prix n'est saisi ci-dessus", cost_rate: "Coût instantané (€/h)", overrun: "Dépassement de puissance (binary_sensor)", overruns_day: "Nombre de dépassements du jour", show_peak: "Afficher le pic du jour (statistiques HA)", theme: "Couleurs de la carte" }, LinkyPuissanceCard.DEFAULTS);
 const LINKYFACTURECARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
   { name: "cycle_start", selector: { text: {} } },
