@@ -107,6 +107,8 @@
         <button data-v="mobile">Téléphone</button><button data-v="large">Tablette / PC</button></div></div>
 
       <h2>Situation simulée</h2>
+      <div class="ctl" data-for="postes prix all"><div class="ctl-l">Contrat (<code>contract</code>, cartes Énergie par poste et Prix)</div><div class="seg" data-key="contract">
+        <button data-v="tempo">Tempo</button><button data-v="hchp">Heures creuses / pleines</button><button data-v="base">Base</button></div></div>
       <div class="ctl" data-for="puissance postes prix all"><div class="ctl-l">Poste Tempo en cours</div><div class="seg" data-key="poste">
         <button data-v="HC BLEU"><i class="sw blue"></i>HC Bleu</button><button data-v="HP BLEU"><i class="sw blue"></i>HP Bleu</button>
         <button data-v="HP BLANC"><i class="sw white"></i>HP Blanc</button><button data-v="HP ROUGE"><i class="sw red"></i>HP Rouge</button></div></div>
@@ -172,7 +174,7 @@
   const BASE = { bleu_hc: 13958.9, bleu_hp: 11875.1, blanc_hc: 1900.8, blanc_hp: 1138.0, rouge_hc: 446.6, rouge_hp: 484.2 };
 
   const defaults = { card: "all", page: "dark", theme: "v2", width: "mobile", poste: "HP BLEU", load: "0.42", kva: "9",
-    budget: "none", period: "mois", prices: "ok", cycle: "ok", enedis: "up" };
+    budget: "none", period: "mois", prices: "ok", cycle: "ok", enedis: "up", contract: "tempo" };
   let state = { ...defaults };
   try { state = { ...defaults, ...JSON.parse(localStorage.getItem("linky-energie-demo") || "{}") }; } catch (e) { /* ignoré */ }
 
@@ -221,6 +223,12 @@
       st[`input_number.baseline_${k}`] = S(state.cycle === "zero" && k === "blanc_hc" ? 0 : BASE[k], "kWh");
       st[`sensor.conso_${k}_cycle_en_cours`] = S(c, "kWh");
     }
+    // export Home Assistant de MyElectricalData (contrats HC/HP et Base), PDL fictif
+    const pdl = "sensor.myelectricaldata_linky_00000000000000_consumption_";
+    const MED = { yesterday: [6.0, 5.3], this_week: [20.4, 27.4], this_month: [136.0, 186.7], this_year: [1427.9, 1937.0] };
+    for (const [per, [hc, hp]] of Object.entries(MED)) {
+      st[`${pdl}${per}_hc`] = S(hc, "kWh"); st[`${pdl}${per}_hp`] = S(hp, "kWh");
+    }
     const seen = new Date(Date.now() - 4 * 60e3).toISOString(); // incident ou page illisible : changement récent
     ENEDIS.forEach((k, i) => {
       const v = state.enedis === "unknown" ? "unavailable" : state.enedis === "incident" && [2, 3, 6].includes(i) ? "down" : "up";
@@ -234,8 +242,10 @@
     const c = {
       puissance: { type: "custom:linky-puissance-card", theme: t },
       facture: { type: "custom:linky-facture-card", theme: t, ...(state.budget !== "none" ? { budget_month: Number(state.budget) } : {}) },
-      postes: { type: "custom:linky-tempo-postes-card", theme: t, period: state.period },
-      prix: { type: "custom:linky-tempo-prix-card", theme: t },
+      postes: state.contract === "tempo" ? { type: "custom:linky-tempo-postes-card", theme: t, period: state.period }
+        : { type: "custom:linky-tempo-postes-card", contract: state.contract, ...(state.contract === "hchp" ? { price_hc: 0.1612, price_hp: 0.2088 } : { price_base: 0.1940 }), theme: t },
+      prix: state.contract === "tempo" ? { type: "custom:linky-tempo-prix-card", theme: t }
+        : { type: "custom:linky-tempo-prix-card", contract: state.contract, ...(state.contract === "hchp" ? { price_hc: 0.1612, price_hp: 0.2088 } : { price_base: 0.1940 }), theme: t },
       cycle: { type: "custom:linky-cycle-card", theme: t },
       enedis: { type: "custom:linky-enedis-status-card", theme: t },
     };

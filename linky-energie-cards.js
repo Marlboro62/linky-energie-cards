@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.2.3";
+const CARD_VERSION = "0.3.0-beta.1";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -406,10 +406,50 @@ const PERIODS = [
   { key: "cycle", label: "Cycle", cfg: "suffix_cycle" },
 ];
 
+/** Contrats HC/HP et Base : postes, et périodes de l'export Home Assistant de MyElectricalData. */
+const CONTRACTS = {
+  hchp: [
+    { k: "hc", h: "HC", label: "Heures creuses", cls: "s-hc" },
+    { k: "hp", h: "HP", label: "Heures pleines", cls: "s-hp" },
+  ],
+  base: [{ k: "base", h: "Base", label: "Base", cls: "s-base" }],
+};
+const MED_PERIODS = [
+  { key: "hier", label: "Hier", med: "yesterday" },
+  { key: "semaine", label: "Semaine", med: "this_week" },
+  { key: "mois", label: "Ce mois", med: "this_month" },
+  { key: "annee", label: "Cette année", med: "this_year" },
+];
+
+/** Poste HC ou HP en cours d'après un texte du type « HC.. », « Heures creuses » (Lixee, Linky TIC). */
+const currentHcHp = (txt) => {
+  const t = String(txt || "").toUpperCase();
+  return /\bHC|CREUSE/.test(t) ? "hc" : /\bHP|PLEINE/.test(t) ? "hp" : null;
+};
+
+/** Préfixe des capteurs de consommation de l'export MyElectricalData : sensor.myelectricaldata_linky_<pdl>_consumption_ */
+const medPrefix = (hass) => {
+  const id = Object.keys(hass?.states || {}).find((x) => /^sensor\.myelectricaldata_linky_\d{14}_consumption_this_(month|year)(_h[cp])?$/.test(x));
+  return id ? id.replace(/this_(month|year)(_h[cp])?$/, "") : "";
+};
+
+/** Prix d'une option : nombre (€/kWh) ou entité. */
+const priceOpt = (card, v) => {
+  if (v === null || v === undefined || v === "") return null;
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  const s = String(v).trim();
+  if (/^[a-z_]+\.[\w]+$/.test(s)) return card._num(s);
+  const n = Number(s.replace(",", "."));
+  return Number.isFinite(n) ? n : null;
+};
+
 class LinkyTempoPostesCard extends EnergyBase {
   static DEFAULTS = {
-    title: "Énergie par poste Tempo",
+    title: "",
+    contract: "tempo", // tempo, hchp (heures creuses / heures pleines) ou base
     period: "mois",
+    energy_prefix: "", // HC/HP et Base : préfixe des capteurs de consommation (vide = export MyElectricalData)
+    price_hc: "", price_hp: "", price_base: "", // HC/HP et Base : prix du kWh (nombre ou entité)
     prefix: "sensor.tempo_",
     suffix_day: "_energie_aujourdhui",
     suffix_month: "_energie_ce_mois",
@@ -425,20 +465,79 @@ class LinkyTempoPostesCard extends EnergyBase {
   }
 
   setConfig(config) {
-    super.setConfig(config);
-    if (!this._tab) {
-      this._tab = PERIODS.some((p) => p.key === this._config.period) ? this._config.period : "mois";
+    const contract = CONTRACTS[config?.contract] ? config.contract : "tempo";
+    super.setConfig({ ...config, title: config?.title || (contract === "tempo" ? "Énergie par poste Tempo" : contract === "hchp" ? "Énergie HC / HP" : "Énergie") });
+    const list = contract === "tempo" ? PERIODS : MED_PERIODS;
+    if (!this._tab || !list.some((p) => p.key === this._tab)) {
+      this._tab = list.some((p) => p.key === this._config.period) ? this._config.period : "mois";
       this._render(true);
     }
   }
 
+  /** HC/HP et Base : identifiant du capteur de consommation d'un poste pour une période. */
+  _simpleId(p, per) {
+    const pre = this._config.energy_prefix || medPrefix(this._hass);
+    return pre ? `${pre}${per.med}${p.k === "base" ? "" : `_${p.k}`}` : null;
+  }
+
   _watch() {
     const c = this._config;
+    if (CONTRACTS[c.contract]) {
+      const ids = CONTRACTS[c.contract].flatMap((p) => MED_PERIODS.map((x) => this._simpleId(p, x)));
+      if (c.contract === "base") ids.push(...MED_PERIODS.flatMap((x) => ["hc", "hp"].map((k) => this._simpleId({ k }, x))));
+      return [c.tarif, c.price_hc, c.price_hp, c.price_base, ...ids].filter((x) => typeof x === "string" && x.includes("."));
+    }
     return [c.tarif, ...POSTES.flatMap((p) => [`${c.price_prefix}${p.k}`, `${c.source_prefix}${p.en}`, ...PERIODS.map((x) => `${c.prefix}${p.k}${c[x.cfg]}`)])];
+  }
+
+  /** Contrats HC/HP et Base : énergie par poste (export MyElectricalData) et coût au prix saisi. */
+  _contentSimple() {
+    const c = this._config;
+    const per = MED_PERIODS.find((p) => p.key === this._tab) || MED_PERIODS[2];
+    const postes = CONTRACTS[c.contract];
+    const cur = c.contract === "hchp" ? currentHcHp(this._st(c.tarif)?.state) : null;
+    const rows = postes.map((p) => {
+      let id = this._simpleId(p, per);
+      let kwh = this._num(id);
+      // Base sans capteur dédié : somme des capteurs HC et HP de l'export
+      if (kwh === null && p.k === "base") {
+        const hc = this._num(this._simpleId({ k: "hc" }, per)), hp = this._num(this._simpleId({ k: "hp" }, per));
+        if (hc !== null || hp !== null) { kwh = (hc || 0) + (hp || 0); id = this._simpleId({ k: "hp" }, per); }
+      }
+      const price = priceOpt(this, c[`price_${p.k}`]);
+      return { p, id, kwh, price, cost: kwh !== null && price !== null ? kwh * price : null };
+    });
+    if (!rows.some((r) => r.kwh !== null)) {
+      return { sub: per.label, body: `${this._tabs(MED_PERIODS)}<div class="empty">Consommation introuvable<span>Activez l'export Home Assistant de MyElectricalData (capteurs <code>sensor.myelectricaldata_linky_&lt;pdl&gt;_consumption_this_month_hc</code>…), ou indiquez le préfixe de vos capteurs dans l'éditeur.</span></div>` };
+    }
+    const sumK = rows.reduce((a, r) => a + (r.kwh || 0), 0);
+    const sumE = rows.reduce((a, r) => a + (r.cost || 0), 0);
+    const anyCost = rows.some((r) => r.cost !== null);
+    const split = rows.length > 1 && sumK > 0
+      ? `<div class="bar en-split">${rows.filter((r) => r.kwh > 0).map((r) => `<i class="${r.p.cls}" style="width:${(r.kwh / sumK) * 100}%" title="${r.p.label} : ${kwhFmt(r.kwh)} kWh"></i>`).join("")}</div>`
+      : "";
+    const table = `<table class="en-t">
+        <thead><tr><th>Poste</th><th>kWh</th>${rows.length > 1 ? "<th>Part</th>" : ""}<th>Prix</th>${anyCost ? "<th>Coût</th>" : ""}</tr></thead>
+        <tbody>${rows.map((r) => `<tr class="${r.p.k === cur ? "cur" : ""}" data-entity="${esc(r.id || "")}">
+          <td><i class="sq ${r.p.cls}"></i>${r.p.label}${r.p.k === cur ? '<span class="now">en cours</span>' : ""}</td>
+          <td>${kwhFmt(r.kwh)}</td>
+          ${rows.length > 1 ? `<td>${sumK > 0 && r.kwh !== null ? `${fmt((r.kwh / sumK) * 100, 0)} %` : "—"}</td>` : ""}
+          <td>${r.price !== null ? fmt(r.price, 4) : "—"}</td>
+          ${anyCost ? `<td>${eur(r.cost)}</td>` : ""}
+        </tr>`).join("")}</tbody>
+        ${rows.length > 1 ? `<tfoot><tr><td>Total</td><td>${kwhFmt(sumK)}</td><td></td><td>${sumK > 0 && anyCost ? fmt(sumE / sumK, 4) : ""}</td>${anyCost ? `<td>${eur(sumE)}</td>` : ""}</tr></tfoot>` : ""}
+      </table>`;
+    const pill = cur ? `<div class="pill" data-entity="${esc(c.tarif)}"><span class="dot ${cur === "hc" ? "d-hc" : "d-hp"}"></span><span class="pill-l">En cours</span><span class="pill-v">${cur.toUpperCase()}</span></div>` : "";
+    const body = `${this._tabs(MED_PERIODS)}
+      <div class="en-sum"><div><span>Énergie</span><b>${kwhFmt(sumK)} kWh</b></div>${anyCost ? `<div><span>Coût énergie</span><b>${eur(sumE)}</b></div>` : ""}</div>
+      ${split}${table}
+      <footer>${anyCost ? "Coût calculé avec le prix du kWh saisi, hors abonnement. " : "Saisissez le prix du kWh dans l'éditeur pour voir le coût. "}Données de MyElectricalData, arrêtées à la veille.</footer>`;
+    return { sub: per.label, right: pill, body };
   }
 
   _content() {
     const c = this._config;
+    if (CONTRACTS[c.contract]) return this._contentSimple();
     const per = PERIODS.find((p) => p.key === this._tab) || PERIODS[1];
     const cur = currentPoste(this._st(c.tarif)?.state);
     const rows = POSTES.map((p) => {
@@ -476,7 +575,9 @@ class LinkyTempoPostesCard extends EnergyBase {
 
 class LinkyTempoPrixCard extends EnergyBase {
   static DEFAULTS = {
-    title: "Prix Tempo",
+    title: "",
+    contract: "tempo", // tempo, hchp ou base
+    price_hc: "", price_hp: "", price_base: "", // HC/HP et Base : prix du kWh (nombre ou entité)
     price_prefix: "sensor.tempo_prix_",
     source_prefix: "sensor.myelectricaldata_tempo_price_",
     fallback_prefix: "input_number.tempo_tarif_",
@@ -489,13 +590,46 @@ class LinkyTempoPrixCard extends EnergyBase {
     return document.createElement("linky-tempo-prix-card-editor");
   }
 
+  setConfig(config) {
+    const contract = CONTRACTS[config?.contract] ? config.contract : "tempo";
+    super.setConfig({ ...config, title: config?.title || (contract === "tempo" ? "Prix Tempo" : contract === "hchp" ? "Prix HC / HP" : "Prix du kWh") });
+    // HC/HP et Base : le capteur de prix en cours n'est lu que s'il est choisi (le défaut est celui du paquet Tempo)
+    this._ownCurrent = !!config?.current;
+  }
+
+  /** Contrats HC/HP et Base : prix saisis, poste en cours, écart HP / HC. */
+  _contentSimple() {
+    const c = this._config;
+    const postes = CONTRACTS[c.contract];
+    const cur = c.contract === "hchp" ? currentHcHp(this._st(c.tarif)?.state) : null;
+    const vals = postes.map((p) => ({ p, v: priceOpt(this, c[`price_${p.k}`]), id: typeof c[`price_${p.k}`] === "string" && c[`price_${p.k}`].includes(".") ? c[`price_${p.k}`] : "" }));
+    if (!vals.some((x) => x.v !== null)) {
+      return { sub: "Prix TTC du kWh", body: `<div class="empty">Aucun prix saisi<span>Indiquez le prix TTC du kWh${c.contract === "hchp" ? " en heures creuses et en heures pleines" : ""} dans l'éditeur de la carte (nombre, ex. 0,2016, ou entité).</span></div>` };
+    }
+    const now = (this._ownCurrent ? this._num(c.current) : null) ?? (cur ? vals.find((x) => x.p.k === cur)?.v ?? null : postes.length === 1 ? vals[0].v : null);
+    const hc = vals.find((x) => x.p.k === "hc")?.v, hp = vals.find((x) => x.p.k === "hp")?.v;
+    const cells = vals.map(({ p, v, id }) => `<div class="pcell ${p.cls} ${p.k === cur ? "cur" : ""}" data-entity="${esc(id)}">
+        <div class="pcell-h"><span class="dot ${p.k === "hc" ? "d-hc" : p.k === "hp" ? "d-hp" : ""}"></span>${p.label}${p.k === cur ? '<span class="now">en cours</span>' : ""}</div>
+        <div class="pcell-v">${v !== null ? fmt(v, 4) : "—"}<span>€/kWh</span></div>
+      </div>`).join("");
+    const body = `<div class="pgrid p-${postes.length}">${cells}</div>
+      <div class="en-sum">
+        ${now !== null ? `<div${this._ownCurrent && this._st(c.current) ? ` data-entity="${esc(c.current)}"` : ""}><span>Prix en ce moment</span><b>${priceFmt(now)}</b></div>` : ""}
+        ${hc > 0 && hp > 0 ? `<div><span>Heures pleines par rapport aux heures creuses</span><b>+ ${fmt((hp / hc - 1) * 100, 0)} %</b></div>` : ""}
+      </div>`;
+    const pill = cur ? `<div class="pill" data-entity="${esc(c.tarif)}"><span class="dot ${cur === "hc" ? "d-hc" : "d-hp"}"></span><span class="pill-l">En cours</span><span class="pill-v">${cur.toUpperCase()}</span></div>` : "";
+    return { sub: "Prix TTC du kWh", right: pill, body };
+  }
+
   _watch() {
     const c = this._config;
+    if (CONTRACTS[c.contract]) return [c.current, c.tarif, c.price_hc, c.price_hp, c.price_base].filter((x) => typeof x === "string" && x.includes("."));
     return [c.current, c.tarif, ...POSTES.flatMap((p) => [`${c.price_prefix}${p.k}`, `${c.source_prefix}${p.en}`, `${c.fallback_prefix}${p.k}`])];
   }
 
   _content() {
     const c = this._config;
+    if (CONTRACTS[c.contract]) return this._contentSimple();
     const cur = currentPoste(this._st(c.tarif)?.state);
     const same = (a, b) => a !== null && b !== null && Math.abs(a - b) < 0.00005;
     let issues = 0;
@@ -798,6 +932,9 @@ ha-card.light .bar .s-white.s-HC, ha-card.light .sq.s-white.s-HC { background: #
 .en-t tfoot td { font-weight: 700; border-top: 2px solid var(--med-line); }
 .now { margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: .66rem; font-weight: 600; background: var(--med-blue); color: #fff; vertical-align: 1px; }
 .pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 12px 0; }
+.pgrid.p-2 { grid-template-columns: repeat(2, 1fr); } .pgrid.p-1 { grid-template-columns: 1fr; }
+.bar .s-hc, .sq.s-hc { background: var(--med-hc); } .bar .s-hp, .sq.s-hp { background: var(--med-hp); } .bar .s-base, .sq.s-base { background: var(--med-blue); }
+.dot.d-hc { background: var(--med-hc); } .dot.d-hp { background: var(--med-hp); }
 @container (max-width: 400px) { .pgrid { grid-template-columns: 1fr; } }
 .pcol { display: flex; flex-direction: column; gap: 8px; }
 .pcol-h { font-size: .8rem; color: var(--med-muted); padding-left: 4px; }
@@ -1054,7 +1191,12 @@ const LINKYFACTURECARD_SCHEMA = [
 const LinkyFactureCardEditor = makeEditor(LINKYFACTURECARD_SCHEMA, { title: "Titre", cycle_start: "Début du cycle de facturation (MM-JJ, ex. 10-01)", cost_cycle: "Coût total du cycle (abonnement compris)", energy_cycle: "Coût énergie du cycle", cost_month: "Coût total du mois", energy_month: "Coût énergie du mois", cost_day: "Coût total aujourd’hui", estimate_month: "Estimation du mois", subscription_month: "Abonnement mensuel", kwh_cycle: "Énergie du cycle (kWh)", kwh_prev_cycle: "Énergie du cycle précédent (kWh)", kwh_month: "Énergie du mois (kWh)", kwh_day: "Énergie aujourd’hui (kWh)", budget_month: "Budget mensuel (facultatif)", theme: "Couleurs de la carte" }, LinkyFactureCard.DEFAULTS);
 const LINKYTEMPOPOSTESCARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
-  { name: "period", selector: { select: { mode: "dropdown", options: [{ value: "jour", label: "Aujourd'hui" }, { value: "mois", label: "Ce mois" }, { value: "cycle", label: "Cycle" }] } } },
+  { name: "contract", selector: { select: { mode: "dropdown", options: [{ value: "tempo", label: "Tempo" }, { value: "hchp", label: "Heures creuses / heures pleines" }, { value: "base", label: "Base" }] } } },
+  { name: "energy_prefix", selector: { text: {} } },
+  { name: "price_hc", selector: { text: {} } },
+  { name: "price_hp", selector: { text: {} } },
+  { name: "price_base", selector: { text: {} } },
+  { name: "period", selector: { select: { mode: "dropdown", options: [{ value: "jour", label: "Aujourd'hui (Tempo)" }, { value: "hier", label: "Hier (HC/HP, Base)" }, { value: "semaine", label: "Semaine (HC/HP, Base)" }, { value: "mois", label: "Ce mois" }, { value: "annee", label: "Cette année (HC/HP, Base)" }, { value: "cycle", label: "Cycle (Tempo)" }] } } },
   { name: "prefix", selector: { text: {} } },
   { name: "suffix_day", selector: { text: {} } },
   { name: "suffix_month", selector: { text: {} } },
@@ -1064,9 +1206,13 @@ const LINKYTEMPOPOSTESCARD_SCHEMA = [
   { name: "tarif", selector: { entity: { domain: "sensor" } } },
   THEME_SELECT,
 ];
-const LinkyTempoPostesCardEditor = makeEditor(LINKYTEMPOPOSTESCARD_SCHEMA, { title: "Titre", period: "Onglet ouvert au chargement", prefix: "Préfixe des capteurs d’énergie", suffix_day: "Suffixe du jour", suffix_month: "Suffixe du mois", suffix_cycle: "Suffixe du cycle", price_prefix: "Préfixe des capteurs de prix", source_prefix: "Préfixe des prix MyElectricalData, si les prix ci-dessus n’existent pas (<blue|white|red>_<hc|hp>)", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPostesCard.DEFAULTS);
+const LinkyTempoPostesCardEditor = makeEditor(LINKYTEMPOPOSTESCARD_SCHEMA, { title: "Titre", contract: "Contrat", energy_prefix: "HC/HP et Base : préfixe des capteurs de consommation (vide = export MyElectricalData)", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", period: "Onglet ouvert au chargement", prefix: "Préfixe des capteurs d’énergie", suffix_day: "Suffixe du jour", suffix_month: "Suffixe du mois", suffix_cycle: "Suffixe du cycle", price_prefix: "Préfixe des capteurs de prix", source_prefix: "Préfixe des prix MyElectricalData, si les prix ci-dessus n’existent pas (<blue|white|red>_<hc|hp>)", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPostesCard.DEFAULTS);
 const LINKYTEMPOPRIXCARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
+  { name: "contract", selector: { select: { mode: "dropdown", options: [{ value: "tempo", label: "Tempo" }, { value: "hchp", label: "Heures creuses / heures pleines" }, { value: "base", label: "Base" }] } } },
+  { name: "price_hc", selector: { text: {} } },
+  { name: "price_hp", selector: { text: {} } },
+  { name: "price_base", selector: { text: {} } },
   { name: "price_prefix", selector: { text: {} } },
   { name: "source_prefix", selector: { text: {} } },
   { name: "fallback_prefix", selector: { text: {} } },
@@ -1074,7 +1220,7 @@ const LINKYTEMPOPRIXCARD_SCHEMA = [
   { name: "tarif", selector: { entity: { domain: "sensor" } } },
   THEME_SELECT,
 ];
-const LinkyTempoPrixCardEditor = makeEditor(LINKYTEMPOPRIXCARD_SCHEMA, { title: "Titre", price_prefix: "Préfixe des prix utilisés (<couleur>_<hc|hp>)", source_prefix: "Préfixe des prix MyElectricalData (<blue|white|red>_<hc|hp>)", fallback_prefix: "Préfixe des prix de secours", current: "Prix du kWh en cours", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPrixCard.DEFAULTS);
+const LinkyTempoPrixCardEditor = makeEditor(LINKYTEMPOPRIXCARD_SCHEMA, { title: "Titre", contract: "Contrat", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", price_prefix: "Préfixe des prix utilisés (<couleur>_<hc|hp>)", source_prefix: "Préfixe des prix MyElectricalData (<blue|white|red>_<hc|hp>)", fallback_prefix: "Préfixe des prix de secours", current: "Prix du kWh en cours", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPrixCard.DEFAULTS);
 const LINKYCYCLECARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
   { name: "control", selector: { entity: { domain: "sensor" } } },

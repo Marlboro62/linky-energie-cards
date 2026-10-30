@@ -29,7 +29,7 @@
 
 # Cartes Linky Énergie
 
-**Six cartes Lovelace indépendantes, dans un seul fichier**, pour suivre l'énergie d'un contrat **EDF Tempo** dans Home Assistant, et l'état des services Enedis. Elles ont le style des cartes MyElectricalData new ([Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new)) : thème bleu nuit, version claire, ou thème Home Assistant.
+**Six cartes Lovelace indépendantes, dans un seul fichier**, pour suivre l'énergie d'un contrat **EDF Tempo**, **heures creuses / heures pleines** ou **Base** dans Home Assistant, et l'état des services Enedis. Elles ont le style des cartes MyElectricalData new ([Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new)) : thème bleu nuit, version claire, ou thème Home Assistant.
 
 Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez avec son propre type. Elles ne remplacent aucune autre carte.
 
@@ -39,8 +39,8 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 | --- | --- |
 | `custom:linky-puissance-card` | **Puissance** : puissance appelée sur la puissance souscrite, coût en ce moment, pic et dépassements du jour |
 | `custom:linky-facture-card` | **Facture** : coût du cycle de facturation, projection, mois en cours, estimation, comparaison avec le cycle précédent |
-| `custom:linky-tempo-postes-card` | **Énergie par poste Tempo** : kWh, part, prix et coût des 6 postes, aujourd'hui, ce mois ou sur le cycle |
-| `custom:linky-tempo-prix-card` | **Prix Tempo** : prix TTC des 6 postes, poste en cours et vérification de la source des prix |
+| `custom:linky-tempo-postes-card` | **Énergie par poste** : kWh, part, prix et coût des 6 postes Tempo, des postes HC et HP, ou en Base |
+| `custom:linky-tempo-prix-card` | **Prix** : prix TTC des 6 postes Tempo (avec vérification de la source), des postes HC et HP, ou en Base, poste en cours |
 | `custom:linky-cycle-card` | **Contrôle du cycle** : baselines des compteurs, automatisations et scripts de maintenance |
 | `custom:linky-enedis-status-card` | **État des services Enedis** : API Data Connect en service ou indisponibles, incident en cours |
 
@@ -51,6 +51,10 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 | Prix Tempo | Contrôle du cycle | Facture (clair) |
 | --- | --- | --- |
 | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/tempo-prix.png" alt="Prix Tempo" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/cycle.png" alt="Contrôle du cycle" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/facture-clair.png" alt="Facture claire" width="300"> |
+
+| Énergie HC / HP | Prix HC / HP | Énergie en Base |
+| --- | --- | --- |
+| <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/hchp-postes.png" alt="Énergie HC / HP" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/hchp-prix.png" alt="Prix HC / HP" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/base-postes.png" alt="Énergie en Base" width="300"> |
 
 *Aperçus réalisés avec des valeurs fictives.*
 
@@ -108,6 +112,33 @@ La jauge passe à l'orange à 70 % et au rouge à 90 % de la puissance souscrite
 | `budget_month` | Budget mensuel en €, comparé à l'estimation (facultatif) | — |
 
 La **projection** ramène le coût du cycle à 365 jours **au rythme actuel**. Elle n'anticipe ni l'hiver ni les jours rouges : en début de cycle, elle sous-estime donc la facture d'un logement chauffé à l'électricité.
+
+### Contrats heures creuses / heures pleines et Base
+
+Les cartes **Énergie par poste** et **Prix** fonctionnent aussi avec un contrat **heures creuses / heures pleines** ou **Base** (Tarif Bleu ou offre de marché) : choisissez le contrat dans l'éditeur (`contract`) et saisissez le prix TTC du kWh.
+
+```yaml
+type: custom:linky-tempo-postes-card
+contract: hchp        # ou base
+price_hc: 0.1612      # prix du kWh, ou une entité (sensor., input_number.)
+price_hp: 0.2088
+```
+
+```yaml
+type: custom:linky-tempo-prix-card
+contract: base
+price_base: 0.1940
+```
+
+- **Énergie par poste** lit la consommation de l'**export Home Assistant de MyElectricalData** (`sensor.myelectricaldata_linky_<pdl>_consumption_this_month_hc`…), trouvée toute seule : onglets **Hier**, **Semaine**, **Ce mois** et **Cette année**, avec le coût de chaque poste au prix saisi. En Base, la carte additionne les capteurs HC et HP de l'export s'il n'y a pas de capteur Base. D'autres capteurs : option `energy_prefix` (le préfixe avant `this_month_hc`).
+- **Prix** affiche le prix de chaque poste, le poste en cours (capteur `tarif`, par exemple la période tarifaire d'un module TIC) et l'écart entre heures pleines et heures creuses.
+
+| Option | Rôle | Défaut |
+| --- | --- | --- |
+| `contract` | `tempo`, `hchp` (heures creuses / heures pleines) ou `base` | `tempo` |
+| `price_hc`, `price_hp`, `price_base` | Prix TTC du kWh : nombre ou entité | — |
+| `energy_prefix` | Préfixe des capteurs de consommation (Énergie par poste) | export MyElectricalData |
+| `period` | Onglet à l'ouverture : `hier`, `semaine`, `mois` ou `annee` | `mois` |
 
 ### Énergie par poste Tempo — `custom:linky-tempo-postes-card`
 
