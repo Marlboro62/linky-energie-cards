@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.3.0-beta.1";
+const CARD_VERSION = "0.3.0-beta.2";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -61,6 +61,12 @@ const currentPoste = (txt) => {
   const c = /ROUGE|RED/.test(t) ? "rouge" : /BLANC|WHITE/.test(t) ? "blanc" : /BLEU|BLUE/.test(t) ? "bleu" : null;
   const h = /HC/.test(t) ? "hc" : /HP/.test(t) ? "hp" : null;
   return c && h ? `${c}_${h}` : null;
+};
+
+/** Poste HC ou HP en cours d'après un texte du type « HC.. », « Heures creuses » (Lixee, Linky TIC, PTEC). */
+const currentHcHp = (txt) => {
+  const t = String(txt || "").toUpperCase();
+  return /\bHC|CREUSE/.test(t) ? "hc" : /\bHP|PLEINE/.test(t) ? "hp" : null;
 };
 
 const posteLabel = (p) => `${TEMPO[p.c].label} ${p.h}`;
@@ -173,7 +179,7 @@ class EnergyBase extends HTMLElement {
   _render(force) {
     if (!this._config || !this._hass || !this.shadowRoot) return;
     const c = this._config;
-    const ids = this._watch();
+    const ids = [...this._watch(), c.tarif ? this._tarif(c.tarif) : null];
     const sig = `${c.theme}|${this._hass.themes?.darkMode}|${this._tab}|${this._armed}|${this._extraSig?.() ?? ""}|` +
       ids.map((id) => { const s = this._st(id); return s ? `${s.state}@${s.last_changed}` : "-"; }).join("|");
     if (!force && sig === this._sig) return;
@@ -186,10 +192,21 @@ class EnergyBase extends HTMLElement {
       </header>${body}</ha-card>`;
   }
 
-  /** Pastille « poste en cours ». */
+  /** Capteur de la période tarifaire : celui de la configuration, sinon un capteur PTEC / période tarifaire trouvé seul. */
+  _tarif(id) {
+    if (id && this._st(id)) return id;
+    const ids = Object.keys(this._hass?.states || {});
+    return ids.find((x) => /^sensor\..*(_ptec|_ltarf|periode_tarifaire(_en_cours)?|tarif_en_cours|current_tarif|current_price)$/.test(x)) || id;
+  }
+
+  /** Pastille « poste en cours » : poste Tempo (« HP BLEU »), sinon HC ou HP (PTEC « HC.. »). */
   _postePill(tarifId) {
+    tarifId = this._tarif(tarifId);
     const p = currentPoste(this._st(tarifId)?.state);
-    if (!p) return "";
+    if (!p) {
+      const hp = currentHcHp(this._st(tarifId)?.state);
+      return hp ? `<div class="pill" data-entity="${esc(tarifId)}"><span class="dot ${hp === "hc" ? "d-hc" : "d-hp"}"></span><span class="pill-l">En cours</span><span class="pill-v">${hp.toUpperCase()}</span></div>` : "";
+    }
     const P = POSTES.find((x) => x.k === p);
     return `<div class="pill ${TEMPO[P.c].cls}" data-entity="${esc(tarifId)}"><span class="dot"></span><span class="pill-l">En cours</span><span class="pill-v">${P.h} ${TEMPO[P.c].label}</span></div>`;
   }
@@ -206,6 +223,7 @@ class LinkyPuissanceCard extends EnergyBase {
     title: "Puissance",
     power: "sensor.lixee_sinsts",
     subscribed: "sensor.lixee_pref",
+    subscribed_kva: "", // puissance souscrite saisie (kVA), si aucun capteur ne la donne
     tarif: "sensor.lixee_current_price",
     price: "sensor.tempo_tarif_ttc_actuel",
     cost_rate: "sensor.tempo_total_instantane",
@@ -221,7 +239,7 @@ class LinkyPuissanceCard extends EnergyBase {
 
   _watch() {
     const c = this._config;
-    return [c.power, c.subscribed, c.tarif, c.price, c.cost_rate, c.overrun, c.overruns_day];
+    return [c.power, c.subscribed, c.tarif, c.price, c.cost_rate, c.overrun, c.overruns_day].filter(Boolean);
   }
 
   _extraSig() {
@@ -271,10 +289,13 @@ class LinkyPuissanceCard extends EnergyBase {
     const c = this._config;
     const va = this._num(c.power);
     const unit = this._unit(c.power, "VA");
-    // Puissance souscrite : en kVA (Lixee) ou en VA
-    let sub = this._num(c.subscribed);
+    // Puissance souscrite : saisie en kVA, sinon capteur en kVA (Lixee, PREF), en VA, ou en ampères (ISOUSC du mode historique : 45 A = 9 kVA)
+    const typed = Number(String(c.subscribed_kva ?? "").replace(",", "."));
+    const sub = this._num(c.subscribed);
     const subUnit = String(this._unit(c.subscribed, "kVA")).toLowerCase();
-    const subVA = sub === null ? null : subUnit.startsWith("k") || sub < 100 ? sub * 1000 : sub;
+    const isAmp = subUnit === "a" || /isousc/i.test(c.subscribed || "");
+    const subVA = Number.isFinite(typed) && typed > 0 ? typed * 1000
+      : sub === null ? null : isAmp ? sub * 200 : subUnit.startsWith("k") || sub < 100 ? sub * 1000 : sub;
     const pct = va !== null && subVA ? (va / subVA) * 100 : null;
     const lvl = pct === null ? "" : pct >= 90 ? "b-alert" : pct >= 70 ? "b-warn" : "b-ok";
     const over = this._st(c.overrun)?.state === "on";
@@ -421,11 +442,6 @@ const MED_PERIODS = [
   { key: "annee", label: "Cette année", med: "this_year" },
 ];
 
-/** Poste HC ou HP en cours d'après un texte du type « HC.. », « Heures creuses » (Lixee, Linky TIC). */
-const currentHcHp = (txt) => {
-  const t = String(txt || "").toUpperCase();
-  return /\bHC|CREUSE/.test(t) ? "hc" : /\bHP|PLEINE/.test(t) ? "hp" : null;
-};
 
 /** Préfixe des capteurs de consommation de l'export MyElectricalData : sensor.myelectricaldata_linky_<pdl>_consumption_ */
 const medPrefix = (hass) => {
@@ -495,7 +511,8 @@ class LinkyTempoPostesCard extends EnergyBase {
     const c = this._config;
     const per = MED_PERIODS.find((p) => p.key === this._tab) || MED_PERIODS[2];
     const postes = CONTRACTS[c.contract];
-    const cur = c.contract === "hchp" ? currentHcHp(this._st(c.tarif)?.state) : null;
+    const tarif = this._tarif(c.tarif);
+    const cur = c.contract === "hchp" ? currentHcHp(this._st(tarif)?.state) : null;
     const rows = postes.map((p) => {
       let id = this._simpleId(p, per);
       let kwh = this._num(id);
@@ -527,7 +544,7 @@ class LinkyTempoPostesCard extends EnergyBase {
         </tr>`).join("")}</tbody>
         ${rows.length > 1 ? `<tfoot><tr><td>Total</td><td>${kwhFmt(sumK)}</td><td></td><td>${sumK > 0 && anyCost ? fmt(sumE / sumK, 4) : ""}</td>${anyCost ? `<td>${eur(sumE)}</td>` : ""}</tr></tfoot>` : ""}
       </table>`;
-    const pill = cur ? `<div class="pill" data-entity="${esc(c.tarif)}"><span class="dot ${cur === "hc" ? "d-hc" : "d-hp"}"></span><span class="pill-l">En cours</span><span class="pill-v">${cur.toUpperCase()}</span></div>` : "";
+    const pill = cur ? this._postePill(c.tarif) : "";
     const body = `${this._tabs(MED_PERIODS)}
       <div class="en-sum"><div><span>Énergie</span><b>${kwhFmt(sumK)} kWh</b></div>${anyCost ? `<div><span>Coût énergie</span><b>${eur(sumE)}</b></div>` : ""}</div>
       ${split}${table}
@@ -601,7 +618,7 @@ class LinkyTempoPrixCard extends EnergyBase {
   _contentSimple() {
     const c = this._config;
     const postes = CONTRACTS[c.contract];
-    const cur = c.contract === "hchp" ? currentHcHp(this._st(c.tarif)?.state) : null;
+    const cur = c.contract === "hchp" ? currentHcHp(this._st(this._tarif(c.tarif))?.state) : null;
     const vals = postes.map((p) => ({ p, v: priceOpt(this, c[`price_${p.k}`]), id: typeof c[`price_${p.k}`] === "string" && c[`price_${p.k}`].includes(".") ? c[`price_${p.k}`] : "" }));
     if (!vals.some((x) => x.v !== null)) {
       return { sub: "Prix TTC du kWh", body: `<div class="empty">Aucun prix saisi<span>Indiquez le prix TTC du kWh${c.contract === "hchp" ? " en heures creuses et en heures pleines" : ""} dans l'éditeur de la carte (nombre, ex. 0,2016, ou entité).</span></div>` };
@@ -617,7 +634,7 @@ class LinkyTempoPrixCard extends EnergyBase {
         ${now !== null ? `<div${this._ownCurrent && this._st(c.current) ? ` data-entity="${esc(c.current)}"` : ""}><span>Prix en ce moment</span><b>${priceFmt(now)}</b></div>` : ""}
         ${hc > 0 && hp > 0 ? `<div><span>Heures pleines par rapport aux heures creuses</span><b>+ ${fmt((hp / hc - 1) * 100, 0)} %</b></div>` : ""}
       </div>`;
-    const pill = cur ? `<div class="pill" data-entity="${esc(c.tarif)}"><span class="dot ${cur === "hc" ? "d-hc" : "d-hp"}"></span><span class="pill-l">En cours</span><span class="pill-v">${cur.toUpperCase()}</span></div>` : "";
+    const pill = cur ? this._postePill(c.tarif) : "";
     return { sub: "Prix TTC du kWh", right: pill, body };
   }
 
@@ -1122,8 +1139,10 @@ const THEME_SELECT = {
 };
 
 /** Éditeur visuel : formulaire Home Assistant construit à partir du schéma. */
-function makeEditor(schema, labels, defaults) {
-  const hasDays = schema.some((s) => s.name === "days");
+function makeEditor(schemaOf, labels, defaults) {
+  // schéma fixe, ou fonction de la configuration (champs du contrat choisi)
+  const schemaFn = typeof schemaOf === "function" ? schemaOf : () => schemaOf;
+  const hasDays = schemaFn({}).some((s) => s.name === "days");
   return class extends HTMLElement {
     setConfig(config) {
       this._config = { ...config };
@@ -1144,13 +1163,15 @@ function makeEditor(schema, labels, defaults) {
         this._form.addEventListener("value-changed", (ev) => {
           const v = { ...ev.detail.value };
           if (hasDays && v.days !== undefined) v.days = Number(v.days);
+          const changedSchema = v.contract !== this._config.contract;
           this._config = v;
           this.dispatchEvent(new CustomEvent("config-changed", { detail: { config: v }, bubbles: true, composed: true }));
+          if (changedSchema) this._draw();
         });
         this.appendChild(this._form);
       }
       this._form.hass = this._hass;
-      this._form.schema = schema;
+      this._form.schema = schemaFn({ ...defaults, ...this._config });
       this._form.data = hasDays
         ? { ...defaults, ...this._config, days: String(this._config.days || defaults.days) }
         : { ...defaults, ...this._config };
@@ -1162,6 +1183,7 @@ const LINKYPUISSANCECARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
   { name: "power", selector: { entity: { domain: "sensor" } } },
   { name: "subscribed", selector: { entity: { domain: "sensor" } } },
+  { name: "subscribed_kva", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
   { name: "tarif", selector: { entity: { domain: "sensor" } } },
   { name: "price", selector: { entity: { domain: "sensor" } } },
   { name: "cost_rate", selector: { entity: { domain: "sensor" } } },
@@ -1170,7 +1192,7 @@ const LINKYPUISSANCECARD_SCHEMA = [
   { name: "show_peak", selector: { boolean: {} } },
   THEME_SELECT,
 ];
-const LinkyPuissanceCardEditor = makeEditor(LINKYPUISSANCECARD_SCHEMA, { title: "Titre", power: "Puissance instantanée (VA ou W)", subscribed: "Puissance souscrite (kVA)", tarif: "Poste Tempo en cours (ex. « HP BLEU »)", price: "Prix du kWh en cours", cost_rate: "Coût instantané (€/h)", overrun: "Dépassement de puissance (binary_sensor)", overruns_day: "Nombre de dépassements du jour", show_peak: "Afficher le pic du jour (statistiques HA)", theme: "Couleurs de la carte" }, LinkyPuissanceCard.DEFAULTS);
+const LinkyPuissanceCardEditor = makeEditor(LINKYPUISSANCECARD_SCHEMA, { title: "Titre", power: "Puissance instantanée (VA ou W)", subscribed: "Puissance souscrite : capteur en kVA, ou ISOUSC en ampères (mode historique)", subscribed_kva: "Puissance souscrite saisie (kVA), si aucun capteur ne la donne", tarif: "Période tarifaire en cours : poste Tempo (« HP BLEU ») ou PTEC (« HC.. »), trouvée seule sinon", price: "Prix du kWh en cours", cost_rate: "Coût instantané (€/h)", overrun: "Dépassement de puissance (binary_sensor)", overruns_day: "Nombre de dépassements du jour", show_peak: "Afficher le pic du jour (statistiques HA)", theme: "Couleurs de la carte" }, LinkyPuissanceCard.DEFAULTS);
 const LINKYFACTURECARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
   { name: "cycle_start", selector: { text: {} } },
@@ -1189,7 +1211,14 @@ const LINKYFACTURECARD_SCHEMA = [
   THEME_SELECT,
 ];
 const LinkyFactureCardEditor = makeEditor(LINKYFACTURECARD_SCHEMA, { title: "Titre", cycle_start: "Début du cycle de facturation (MM-JJ, ex. 10-01)", cost_cycle: "Coût total du cycle (abonnement compris)", energy_cycle: "Coût énergie du cycle", cost_month: "Coût total du mois", energy_month: "Coût énergie du mois", cost_day: "Coût total aujourd’hui", estimate_month: "Estimation du mois", subscription_month: "Abonnement mensuel", kwh_cycle: "Énergie du cycle (kWh)", kwh_prev_cycle: "Énergie du cycle précédent (kWh)", kwh_month: "Énergie du mois (kWh)", kwh_day: "Énergie aujourd’hui (kWh)", budget_month: "Budget mensuel (facultatif)", theme: "Couleurs de la carte" }, LinkyFactureCard.DEFAULTS);
-const LINKYTEMPOPOSTESCARD_SCHEMA = [
+const TEMPO_ONLY = ["prefix", "suffix_day", "suffix_month", "suffix_cycle", "price_prefix", "source_prefix", "fallback_prefix", "current"];
+/** Champs de l'éditeur selon le contrat : Tempo (préfixes des capteurs) ou HC/HP et Base (prix saisis). */
+const byContract = (list) => (cfg) => {
+  const k = CONTRACTS[cfg?.contract] ? cfg.contract : "tempo";
+  return list.filter((f) => (k === "tempo" ? !["price_hc", "price_hp", "price_base", "energy_prefix"].includes(f.name)
+    : !TEMPO_ONLY.includes(f.name) && !(k === "hchp" && f.name === "price_base") && !(k === "base" && ["price_hc", "price_hp"].includes(f.name))));
+};
+const LINKYTEMPOPOSTESCARD_FIELDS = [
   { name: "title", selector: { text: {} } },
   { name: "contract", selector: { select: { mode: "dropdown", options: [{ value: "tempo", label: "Tempo" }, { value: "hchp", label: "Heures creuses / heures pleines" }, { value: "base", label: "Base" }] } } },
   { name: "energy_prefix", selector: { text: {} } },
@@ -1206,8 +1235,9 @@ const LINKYTEMPOPOSTESCARD_SCHEMA = [
   { name: "tarif", selector: { entity: { domain: "sensor" } } },
   THEME_SELECT,
 ];
-const LinkyTempoPostesCardEditor = makeEditor(LINKYTEMPOPOSTESCARD_SCHEMA, { title: "Titre", contract: "Contrat", energy_prefix: "HC/HP et Base : préfixe des capteurs de consommation (vide = export MyElectricalData)", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", period: "Onglet ouvert au chargement", prefix: "Préfixe des capteurs d’énergie", suffix_day: "Suffixe du jour", suffix_month: "Suffixe du mois", suffix_cycle: "Suffixe du cycle", price_prefix: "Préfixe des capteurs de prix", source_prefix: "Préfixe des prix MyElectricalData, si les prix ci-dessus n’existent pas (<blue|white|red>_<hc|hp>)", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPostesCard.DEFAULTS);
-const LINKYTEMPOPRIXCARD_SCHEMA = [
+const LINKYTEMPOPOSTESCARD_SCHEMA = byContract(LINKYTEMPOPOSTESCARD_FIELDS);
+const LinkyTempoPostesCardEditor = makeEditor(LINKYTEMPOPOSTESCARD_SCHEMA, { title: "Titre", contract: "Contrat", energy_prefix: "HC/HP et Base : préfixe des capteurs de consommation (vide = export MyElectricalData)", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", period: "Onglet ouvert au chargement", prefix: "Préfixe des capteurs d’énergie", suffix_day: "Suffixe du jour", suffix_month: "Suffixe du mois", suffix_cycle: "Suffixe du cycle", price_prefix: "Préfixe des capteurs de prix", source_prefix: "Préfixe des prix MyElectricalData, si les prix ci-dessus n’existent pas (<blue|white|red>_<hc|hp>)", tarif: "Période tarifaire en cours (Tempo ou PTEC HC / HP), trouvée seule sinon", theme: "Couleurs de la carte" }, LinkyTempoPostesCard.DEFAULTS);
+const LINKYTEMPOPRIXCARD_FIELDS = [
   { name: "title", selector: { text: {} } },
   { name: "contract", selector: { select: { mode: "dropdown", options: [{ value: "tempo", label: "Tempo" }, { value: "hchp", label: "Heures creuses / heures pleines" }, { value: "base", label: "Base" }] } } },
   { name: "price_hc", selector: { text: {} } },
@@ -1220,7 +1250,8 @@ const LINKYTEMPOPRIXCARD_SCHEMA = [
   { name: "tarif", selector: { entity: { domain: "sensor" } } },
   THEME_SELECT,
 ];
-const LinkyTempoPrixCardEditor = makeEditor(LINKYTEMPOPRIXCARD_SCHEMA, { title: "Titre", contract: "Contrat", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", price_prefix: "Préfixe des prix utilisés (<couleur>_<hc|hp>)", source_prefix: "Préfixe des prix MyElectricalData (<blue|white|red>_<hc|hp>)", fallback_prefix: "Préfixe des prix de secours", current: "Prix du kWh en cours", tarif: "Poste Tempo en cours", theme: "Couleurs de la carte" }, LinkyTempoPrixCard.DEFAULTS);
+const LINKYTEMPOPRIXCARD_SCHEMA = byContract(LINKYTEMPOPRIXCARD_FIELDS);
+const LinkyTempoPrixCardEditor = makeEditor(LINKYTEMPOPRIXCARD_SCHEMA, { title: "Titre", contract: "Contrat", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", price_prefix: "Préfixe des prix utilisés (<couleur>_<hc|hp>)", source_prefix: "Préfixe des prix MyElectricalData (<blue|white|red>_<hc|hp>)", fallback_prefix: "Préfixe des prix de secours", current: "Prix du kWh en cours", tarif: "Période tarifaire en cours (Tempo ou PTEC HC / HP), trouvée seule sinon", theme: "Couleurs de la carte" }, LinkyTempoPrixCard.DEFAULTS);
 const LINKYCYCLECARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
   { name: "control", selector: { entity: { domain: "sensor" } } },
