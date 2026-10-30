@@ -140,8 +140,12 @@ energy_hc_annee: sensor.conso_hc_annee
 energy_hp_annee: sensor.conso_hp_annee
 ```
 
-- **Cycle** : énergie consommée **depuis `cycle_start`**, lue dans les statistiques longue durée de Home Assistant pour les capteurs `…_annee` : peu importe la date à laquelle ils repartent à zéro (1er janvier, début du cycle…). Elle est comptée au prix de chaque poste, plus l'abonnement au prorata des jours écoulés. Sans statistiques (capteur sans `state_class`), la valeur du capteur est utilisée telle quelle.
-- **Cycle précédent** : calculé de la même façon si `kwh_prev_cycle` n'est pas renseigné.
+- **Cycle** : énergie consommée **depuis `cycle_start`**, lue dans les statistiques longue durée de Home Assistant, poste par poste. Source, dans l'ordre :
+  1. `energy_hc_index` / `energy_hp_index` (ou `energy_base_index`) : capteurs d'index du compteur, si vous les indiquez ;
+  2. sinon, les capteurs du **tableau de bord Énergie** (réglages Énergie, réseau), reconnus HC et HP à leur nom : la carte retrouve alors le même total que le tableau de bord ;
+  3. sinon, les capteurs `…_annee`, peu importe leur date de remise à zéro, mais seulement depuis la création de leurs statistiques.
+  Le coût est compté au prix de chaque poste, plus l'abonnement au prorata des jours écoulés.
+- **Cycle précédent** : calculé de la même façon si `kwh_prev_cycle` n'est pas renseigné, et seulement si les statistiques couvrent tout le cycle précédent.
 - **Mois** : énergie du mois plus un mois d'abonnement ; **Estimation du mois** : énergie du mois ramenée au mois entier, plus l'abonnement.
 - **Aujourd'hui** : énergie du jour plus un jour d'abonnement.
 - En Base : `price_base`, `energy_base_jour`, `energy_base_mois`, `energy_base_annee`.

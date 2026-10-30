@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.3.0-beta.9";
+const CARD_VERSION = "0.3.0-beta.10";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -392,8 +392,8 @@ class LinkyFactureCard extends EnergyBase {
       let kwh = null, cost = null, priced = true;
       for (const k of postes) {
         const id = c[`energy_${k}_${key}`];
-        // cycle : énergie depuis cycle_start d'après les statistiques HA (capteur remis à zéro à une autre date, ex. le 1er janvier)
-        const fromStats = key === "annee" ? this._cyc?.cur?.[id] : undefined;
+        // cycle : énergie depuis cycle_start d'après les statistiques HA (index du compteur du tableau de bord Énergie, ou capteur annuel)
+        const fromStats = key === "annee" ? this._cyc?.cur?.[k] : undefined;
         const v = fromStats !== undefined ? fromStats : typeof id === "string" && id.includes(".") ? this._num(id) : null;
         if (v === null) continue;
         const price = priceOpt(this, c[`price_${k}`]);
@@ -425,8 +425,33 @@ class LinkyFactureCard extends EnergyBase {
     super.hass = hass;
     const c = this._config;
     if (!c || !CONTRACTS[c.contract] || !hass?.callWS) return;
-    const key = `${c.cycle_start}|${c.contract}|${Object.keys(c).filter((k) => /^energy_.*_annee$/.test(k)).map((k) => c[k]).join(",")}`;
+    const key = `${c.cycle_start}|${c.contract}|${Object.keys(c).filter((k) => /^energy_.*_(annee|index)$/.test(k)).map((k) => c[k]).join(",")}`;
     if (this._cyc?.key !== key || Date.now() - (this._cyc?.at || 0) > 30 * 60e3) this._loadCycle(key);
+  }
+
+  /** Capteurs d'index par poste : option energy_<poste>_index, sinon ceux du tableau de bord Énergie (HC et HP reconnus à leur nom). */
+  async _indexIds() {
+    const c = this._config;
+    const postes = CONTRACTS[c.contract].map((p) => p.k);
+    const own = Object.fromEntries(postes.map((k) => [k, c[`energy_${k}_index`]]).filter(([, v]) => typeof v === "string" && v.includes(".")));
+    if (Object.keys(own).length === postes.length) return own;
+    let ids = [];
+    try {
+      const prefs = await this._hass.callWS({ type: "energy/get_prefs" });
+      const walk = (o) => { if (!o || typeof o !== "object") return; for (const [k, v] of Object.entries(o)) { if (k === "stat_energy_from" && typeof v === "string") ids.push(v); else walk(v); } };
+      for (const src of prefs?.energy_sources || []) if (src.type === "grid") walk(src);
+    } catch (e) {
+      return null;
+    }
+    ids = [...new Set(ids)];
+    const label = (id) => `${id} ${this._st(id)?.attributes?.friendly_name || ""}`.toLowerCase();
+    const found = { ...own };
+    if (c.contract === "base") { if (!found.base && ids.length === 1) found.base = ids[0]; }
+    else {
+      found.hc ||= ids.find((id) => /(^|[^a-z])hc([^a-z]|$)|creuse|off.?peak/.test(label(id)));
+      found.hp ||= ids.find((id) => id !== found.hc && (/(^|[^a-z])hp([^a-z]|$)|pleine/.test(label(id)) || (/peak/.test(label(id)) && !/off.?peak/.test(label(id)))));
+    }
+    return postes.every((k) => found[k]) ? found : null;
   }
 
   /** Énergie du cycle en cours et du précédent, poste par poste, d'après les statistiques longue durée (somme des variations journalières). */
@@ -434,25 +459,32 @@ class LinkyFactureCard extends EnergyBase {
     if (this._cycBusy) return;
     this._cycBusy = true;
     const c = this._config;
-    const ids = CONTRACTS[c.contract].map((p) => c[`energy_${p.k}_annee`]).filter((x) => typeof x === "string" && x.includes("."));
-    const prev = { key, at: Date.now(), cur: {}, prev: {} };
+    const res = { key, at: Date.now(), cur: {}, prev: {}, source: null };
     try {
+      // 1. index du compteur (historique complet) ; 2. capteurs annuels de la carte
+      const annee = Object.fromEntries(CONTRACTS[c.contract].map((p) => [p.k, c[`energy_${p.k}_annee`]]).filter(([, v]) => typeof v === "string" && v.includes(".")));
+      const index = await this._indexIds();
+      const map = index || annee;
+      res.source = index ? "index" : "annee";
+      const ids = Object.values(map);
       if (ids.length) {
         const cy = this._cycle();
         const prevStart = new Date(cy.start.getFullYear() - 1, cy.start.getMonth(), cy.start.getDate());
         const ask = (start, end) => this._hass.callWS({ type: "recorder/statistics_during_period", start_time: start.toISOString(), end_time: end.toISOString(), statistic_ids: ids, period: "day", types: ["change"] });
         const [cur, old] = await Promise.all([ask(cy.start, new Date()), ask(prevStart, cy.start)]);
         const sum = (rows) => { let t = null; for (const r of rows || []) if (Number.isFinite(r.change)) t = (t || 0) + r.change; return t; };
-        for (const id of ids) {
+        // le cycle précédent ne compte que si les statistiques le couvrent en entier (sinon il serait faux)
+        const covers = (rows) => rows?.length && new Date(rows[0].start) - prevStart < 3 * 86400000;
+        for (const [k, id] of Object.entries(map)) {
           const a = sum(cur?.[id]), b = sum(old?.[id]);
-          if (a !== null) prev.cur[id] = a;
-          if (b !== null) prev.prev[id] = b;
+          if (a !== null) res.cur[k] = a;
+          if (b !== null && covers(old?.[id])) res.prev[k] = b;
         }
       }
     } catch (e) {
-      // pas de statistiques (capteur sans state_class) : la valeur du capteur est utilisée
+      // pas de statistiques : la valeur des capteurs est utilisée
     }
-    this._cyc = prev;
+    this._cyc = res;
     this._cycBusy = false;
     this._render();
   }
@@ -478,7 +510,8 @@ class LinkyFactureCard extends EnergyBase {
     const subsc = calc ? calc.subsc : total !== null && energy !== null ? total - energy : null;
     const proj = total !== null ? (total / cy.elapsed) * cy.total : null;
     const kwh = calc ? calc.kwh : this._num(c.kwh_cycle);
-    const prevStats = calc && this._cyc ? Object.values(this._cyc.prev) : [];
+    // cycle précédent : seulement si tous les postes sont connus sur toute la période
+    const prevStats = calc && this._cyc && Object.keys(this._cyc.prev).length === CONTRACTS[c.contract].length ? Object.values(this._cyc.prev) : [];
     const prevKwh = this._num(c.kwh_prev_cycle) ?? (prevStats.length ? prevStats.reduce((a, b) => a + b, 0) : null);
     const projKwh = kwh !== null ? (kwh / cy.elapsed) * cy.total : null;
     const avg = energy !== null && kwh ? energy / kwh : null;
@@ -1506,10 +1539,16 @@ const LINKYFACTURECARD_SCHEMA = (cfg) => {
     ...postes.map((p) => ({ name: `price_${p}`, selector: { text: {} } })),
     { name: "subscription_month", selector: { text: {} } },
     { type: "expandable", name: "energy_entities", title: "Mes capteurs de consommation (kWh)", flatten: true,
-      schema: FACTURE_PERIODS.flatMap(([per]) => postes.map((p) => ({ name: `energy_${p}_${per}`, selector: { entity: { domain: "sensor" } } }))) },
+      schema: [...FACTURE_PERIODS.flatMap(([per]) => postes.map((p) => ({ name: `energy_${p}_${per}`, selector: { entity: { domain: "sensor" } } }))),
+        ...postes.map((p) => ({ name: `energy_${p}_index`, selector: { entity: { domain: "sensor" } } }))] },
     ...base.slice(i)];
 };
-const FACTURE_ENERGY_LABELS = Object.fromEntries(FACTURE_PERIODS.flatMap(([per, l]) => [["hc", "Heures creuses"], ["hp", "Heures pleines"], ["base", "Base"]].map(([p, pl]) => [`energy_${p}_${per}`, `${pl} : ${l}`])));
+const FACTURE_ENERGY_LABELS = {
+  ...Object.fromEntries(FACTURE_PERIODS.flatMap(([per, l]) => [["hc", "Heures creuses"], ["hp", "Heures pleines"], ["base", "Base"]].map(([p, pl]) => [`energy_${p}_${per}`, `${pl} : ${l}`]))),
+  energy_hc_index: "Index heures creuses du compteur, pour le cycle (vide = celui du tableau de bord Énergie)",
+  energy_hp_index: "Index heures pleines du compteur, pour le cycle (vide = celui du tableau de bord Énergie)",
+  energy_base_index: "Index Base du compteur, pour le cycle (vide = celui du tableau de bord Énergie)",
+};
 const LinkyFactureCardEditor = makeEditor(LINKYFACTURECARD_SCHEMA, { ...FACTURE_ENERGY_LABELS, energy_entities: "Mes capteurs de consommation (kWh)", contract: "Contrat", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", title: "Titre", cycle_start: "Début du cycle de facturation (MM-JJ, ex. 10-01)", cost_cycle: "Coût total du cycle (abonnement compris)", energy_cycle: "Coût énergie du cycle", cost_month: "Coût total du mois", energy_month: "Coût énergie du mois", cost_day: "Coût total aujourd’hui", estimate_month: "Estimation du mois", subscription_month: "Abonnement mensuel TTC (nombre ou entité)", kwh_cycle: "Énergie du cycle (kWh)", kwh_prev_cycle: "Énergie du cycle précédent (kWh)", kwh_month: "Énergie du mois (kWh)", kwh_day: "Énergie aujourd’hui (kWh)", budget_month: "Budget mensuel (facultatif)", theme: "Couleurs de la carte" }, LinkyFactureCard.DEFAULTS);
 const TEMPO_ONLY = ["prefix", "suffix_day", "suffix_month", "suffix_cycle", "price_prefix", "source_prefix", "fallback_prefix", "current"];
 /** Champs de l'éditeur selon le contrat : Tempo (préfixes des capteurs) ou HC/HP et Base (prix saisis). */
