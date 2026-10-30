@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.3.0-beta.7";
+const CARD_VERSION = "0.3.0-beta.8";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -354,6 +354,7 @@ class LinkyPuissanceCard extends EnergyBase {
 class LinkyFactureCard extends EnergyBase {
   static DEFAULTS = {
     title: "Facture",
+    contract: "tempo", // tempo : capteurs de coût ; hchp ou base : coût calculé avec les kWh et les prix saisis
     cycle_start: "10-01",
     cost_cycle: "sensor.tempo_cout_total_cycle_en_cours",
     energy_cycle: "sensor.tempo_cout_energie_cycle_en_cours",
@@ -376,7 +377,42 @@ class LinkyFactureCard extends EnergyBase {
 
   _watch() {
     const c = this._config;
-    return [c.cost_cycle, c.energy_cycle, c.cost_month, c.energy_month, c.cost_day, c.estimate_month, c.subscription_month, c.kwh_cycle, c.kwh_prev_cycle, c.kwh_month, c.kwh_day];
+    const own = Object.keys(c).filter((k) => /^(energy_|price_)/.test(k)).map((k) => c[k]);
+    return [c.cost_cycle, c.energy_cycle, c.cost_month, c.energy_month, c.cost_day, c.estimate_month, c.subscription_month, c.kwh_cycle, c.kwh_prev_cycle, c.kwh_month, c.kwh_day, ...own]
+      .filter((x) => typeof x === "string" && x.includes("."));
+  }
+
+  /** HC/HP et Base : coût calculé avec les kWh de chaque poste, les prix saisis et l'abonnement mensuel. */
+  _computed(cy) {
+    const c = this._config;
+    const postes = CONTRACTS[c.contract].map((p) => p.k);
+    const sub = priceOpt(this, c.subscription_month);
+    // kWh et coût énergie d'une période (jour, mois, annee = cycle)
+    const per = (key) => {
+      let kwh = null, cost = null, priced = true;
+      for (const k of postes) {
+        const id = c[`energy_${k}_${key}`];
+        const v = typeof id === "string" && id.includes(".") ? this._num(id) : null;
+        if (v === null) continue;
+        const price = priceOpt(this, c[`price_${k}`]);
+        kwh = (kwh || 0) + v;
+        if (price === null) priced = false; else cost = (cost || 0) + v * price;
+      }
+      return { kwh, cost: priced ? cost : null, id: c[`energy_${postes[postes.length - 1]}_${key}`] };
+    };
+    const d = per("jour"), m = per("mois"), y = per("annee");
+    const now = new Date();
+    const dim = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
+    const dayFrac = (now.getHours() * 60 + now.getMinutes()) / 1440;
+    const monthDays = now.getDate() - 1 + Math.max(dayFrac, 0.05);
+    const subDay = sub !== null ? (sub * 12) / 365 : null;
+    const subCycle = sub !== null ? (sub * 12 * cy.elapsed) / 365 : null;
+    return {
+      total: y.cost !== null ? y.cost + (subCycle || 0) : null, energy: y.cost, subsc: subCycle, kwh: y.kwh, idCycle: y.id,
+      month: m.cost !== null ? m.cost + (sub || 0) : null, energyMonth: m.cost, kwhMonth: m.kwh, idMonth: m.id,
+      est: m.cost !== null ? (m.cost / monthDays) * dim + (sub || 0) : null,
+      day: d.cost !== null ? d.cost + (subDay || 0) : null, kwhDay: d.kwh, idDay: d.id, sub,
+    };
   }
 
   _extraSig() {
@@ -398,11 +434,12 @@ class LinkyFactureCard extends EnergyBase {
   _content() {
     const c = this._config;
     const cy = this._cycle();
-    const total = this._num(c.cost_cycle);
-    const energy = this._num(c.energy_cycle);
-    const subsc = total !== null && energy !== null ? total - energy : null;
+    const calc = CONTRACTS[c.contract] ? this._computed(cy) : null;
+    const total = calc ? calc.total : this._num(c.cost_cycle);
+    const energy = calc ? calc.energy : this._num(c.energy_cycle);
+    const subsc = calc ? calc.subsc : total !== null && energy !== null ? total - energy : null;
     const proj = total !== null ? (total / cy.elapsed) * cy.total : null;
-    const kwh = this._num(c.kwh_cycle);
+    const kwh = calc ? calc.kwh : this._num(c.kwh_cycle);
     const prevKwh = this._num(c.kwh_prev_cycle);
     const projKwh = kwh !== null ? (kwh / cy.elapsed) * cy.total : null;
     const avg = energy !== null && kwh ? energy / kwh : null;
@@ -411,16 +448,22 @@ class LinkyFactureCard extends EnergyBase {
     const startTxt = cy.start.getDate() === 1 ? `1er ${cy.start.toLocaleDateString("fr-FR", { month: "long" })}` : cy.start.toLocaleDateString("fr-FR", { day: "numeric", month: "long" });
     const endTxt = new Date(cy.end - 86400000).toLocaleDateString("fr-FR", { day: "numeric", month: "long", year: "numeric" });
 
-    const month = this._num(c.cost_month);
-    const est = this._num(c.estimate_month);
+    const month = calc ? calc.month : this._num(c.cost_month);
+    const est = calc ? calc.est : this._num(c.estimate_month);
     const budget = Number(c.budget_month) || null;
-    const day = this._num(c.cost_day);
+    const day = calc ? calc.day : this._num(c.cost_day);
+    const energyMonth = calc ? calc.energyMonth : this._num(c.energy_month);
+    const kwhMonth = calc ? calc.kwhMonth : this._num(c.kwh_month);
+    const kwhDay = calc ? calc.kwhDay : this._num(c.kwh_day);
+    const sub = calc ? calc.sub : this._num(c.subscription_month);
+    const ids = calc ? { cycle: calc.idCycle, month: calc.idMonth, est: calc.idMonth, day: calc.idDay, kwh: calc.idCycle }
+      : { cycle: c.cost_cycle, month: c.cost_month, est: c.estimate_month, day: c.cost_day, kwh: c.kwh_cycle };
     const tile = (id, label, v, note, cls = "") =>
       v === null ? "" : `<div class="tile ${cls}" data-entity="${esc(id)}"><div class="tile-l">${label}</div><div class="tile-v">${v}</div>${note ? `<div class="tile-n">${note}</div>` : ""}</div>`;
     const monthName = new Date().toLocaleDateString("fr-FR", { month: "long" });
 
     const body = `
-      <div class="en-hero" data-entity="${esc(c.cost_cycle)}">
+      <div class="en-hero" data-entity="${esc(ids.cycle)}">
         <div class="en-hero-l">Cycle en cours, depuis le ${startTxt}</div>
         <div class="en-hero-row">
           <div class="en-hero-v">${total !== null ? eur(total).replace(" €", "") : "—"}<span>€</span></div>
@@ -431,15 +474,20 @@ class LinkyFactureCard extends EnergyBase {
         <div class="g-n"><span>jour ${Math.floor(cy.elapsed) + 1} sur ${cy.total}</span><span>fin le ${endTxt}</span></div>
       </div>
       <div class="tiles en-tiles">
-        ${tile(c.cost_month, `${cap(monthName)}`, month !== null ? eur(month) : null, [this._num(c.energy_month) !== null ? `énergie ${eur(this._num(c.energy_month))}` : null, this._num(c.kwh_month) !== null ? `${kwhFmt(this._num(c.kwh_month))} kWh` : null].filter(Boolean).join(" · "))}
-        ${tile(c.estimate_month, "Estimation du mois", est !== null ? eur(est) : null, budget ? `budget ${eur(budget)}${est !== null ? (est > budget ? ` · <em class="warn">+${eur(est - budget)}</em>` : ` · <em class="ok">${eur(budget - est)} de marge</em>`) : ""}` : "", budget && est > budget ? "t-warn" : "")}
-        ${tile(c.cost_day, "Aujourd'hui", day !== null ? eur(day) : null, this._num(c.kwh_day) !== null ? `${kwhFmt(this._num(c.kwh_day))} kWh` : "")}
-        ${tile(c.kwh_cycle, "Énergie du cycle", kwh !== null ? `${fmt(kwh, 0)}<span>kWh</span>` : null, prevKwh !== null ? `projection ${fmt(projKwh, 0)} kWh · cycle précédent ${fmt(prevKwh, 0)} kWh${evo !== null ? ` <em class="${evo > 0 ? "warn" : "ok"}">${evo > 0 ? "+" : ""}${fmt(evo, 0)} %</em>` : ""}` : "")}
+        ${tile(ids.month, `${cap(monthName)}`, month !== null ? eur(month) : null, [energyMonth !== null ? `énergie ${eur(energyMonth)}` : null, kwhMonth !== null ? `${kwhFmt(kwhMonth)} kWh` : null].filter(Boolean).join(" · "))}
+        ${tile(ids.est, "Estimation du mois", est !== null ? eur(est) : null, budget ? `budget ${eur(budget)}${est !== null ? (est > budget ? ` · <em class="warn">+${eur(est - budget)}</em>` : ` · <em class="ok">${eur(budget - est)} de marge</em>`) : ""}` : "", budget && est > budget ? "t-warn" : "")}
+        ${tile(ids.day, "Aujourd'hui", day !== null ? eur(day) : null, kwhDay !== null ? `${kwhFmt(kwhDay)} kWh` : "")}
+        ${tile(ids.kwh, "Énergie du cycle", kwh !== null ? `${fmt(kwh, 0)}<span>kWh</span>` : null, prevKwh !== null ? `projection ${fmt(projKwh, 0)} kWh · cycle précédent ${fmt(prevKwh, 0)} kWh${evo !== null ? ` <em class="${evo > 0 ? "warn" : "ok"}">${evo > 0 ? "+" : ""}${fmt(evo, 0)} %</em>` : ""}` : "")}
       </div>`;
-    const right = this._num(c.subscription_month) !== null
-      ? `<div class="pill" data-entity="${esc(c.subscription_month)}"><span class="pill-l">Abonnement</span><span class="pill-v">${eur(this._num(c.subscription_month))}/mois</span></div>`
+    const subId = typeof c.subscription_month === "string" && c.subscription_month.includes(".") ? c.subscription_month : "";
+    const right = sub !== null
+      ? `<div class="pill" data-entity="${esc(subId)}"><span class="pill-l">Abonnement</span><span class="pill-v">${eur(sub)}/mois</span></div>`
       : "";
-    return { sub: "EDF Tempo, au tarif en vigueur", right, body };
+    if (calc && total === null && month === null && day === null) {
+      return { sub: "Coût calculé", right, body: `<div class="empty">Aucune consommation<span>Choisissez vos capteurs de consommation (kWh) et saisissez le prix du kWh de chaque poste dans l'éditeur de la carte.</span></div>` };
+    }
+    const subTxt = calc ? `${c.contract === "hchp" ? "Heures creuses / heures pleines" : "Option Base"}, coût calculé avec vos prix` : "EDF Tempo, au tarif en vigueur";
+    return { sub: subTxt, right, body };
   }
 }
 
@@ -1388,8 +1436,9 @@ const LINKYPUISSANCECARD_SCHEMA = (cfg) => {
   return LINKYPUISSANCECARD_FIELDS.filter((f) => !hide.includes(f.name));
 };
 const LinkyPuissanceCardEditor = makeEditor(LINKYPUISSANCECARD_SCHEMA, { title: "Titre", power: "Puissance apparente instantanée en VA (PAPP, SINSTS) : jauge face à la puissance souscrite", power_active: "Puissance active en W (facultatif) : coût en € réel et cos φ", subscribed: "Puissance souscrite : capteur en kVA, ou ISOUSC en ampères (mode historique)", subscribed_kva: "Puissance souscrite saisie (kVA), si aucun capteur ne la donne", contract: "Contrat", tarif: "Période tarifaire en cours : poste Tempo (« HP BLEU ») ou PTEC (« HC.. »), trouvée seule sinon", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", price: "Prix du kWh en cours (capteur), utilisé si aucun prix n'est saisi ci-dessus", cost_rate: "Coût instantané (€/h)", overrun: "Dépassement de puissance (binary_sensor)", overruns_day: "Nombre de dépassements du jour", show_peak: "Afficher le pic du jour (statistiques HA)", theme: "Couleurs de la carte" }, LinkyPuissanceCard.DEFAULTS);
-const LINKYFACTURECARD_SCHEMA = [
+const LINKYFACTURECARD_FIELDS = [
   { name: "title", selector: { text: {} } },
+  { name: "contract", selector: { select: { mode: "dropdown", options: [{ value: "tempo", label: "Tempo (capteurs de coût)" }, { value: "hchp", label: "Heures creuses / heures pleines" }, { value: "base", label: "Base" }] } } },
   { name: "cycle_start", selector: { text: {} } },
   { name: "cost_cycle", selector: { entity: { domain: "sensor" } } },
   { name: "energy_cycle", selector: { entity: { domain: "sensor" } } },
@@ -1405,7 +1454,24 @@ const LINKYFACTURECARD_SCHEMA = [
   { name: "budget_month", selector: { number: { min: 0, max: 1000, step: 1, mode: "box", unit_of_measurement: "€" } } },
   THEME_SELECT,
 ];
-const LinkyFactureCardEditor = makeEditor(LINKYFACTURECARD_SCHEMA, { title: "Titre", cycle_start: "Début du cycle de facturation (MM-JJ, ex. 10-01)", cost_cycle: "Coût total du cycle (abonnement compris)", energy_cycle: "Coût énergie du cycle", cost_month: "Coût total du mois", energy_month: "Coût énergie du mois", cost_day: "Coût total aujourd’hui", estimate_month: "Estimation du mois", subscription_month: "Abonnement mensuel", kwh_cycle: "Énergie du cycle (kWh)", kwh_prev_cycle: "Énergie du cycle précédent (kWh)", kwh_month: "Énergie du mois (kWh)", kwh_day: "Énergie aujourd’hui (kWh)", budget_month: "Budget mensuel (facultatif)", theme: "Couleurs de la carte" }, LinkyFactureCard.DEFAULTS);
+// HC/HP et Base : prix, abonnement et capteurs de consommation au lieu des capteurs de coût
+const FACTURE_PERIODS = [["jour", "aujourd'hui"], ["mois", "ce mois"], ["annee", "cycle de facturation (ou année)"]];
+const LINKYFACTURECARD_SCHEMA = (cfg) => {
+  const k = CONTRACTS[cfg?.contract] ? cfg.contract : "tempo";
+  if (k === "tempo") return LINKYFACTURECARD_FIELDS;
+  const postes = k === "hchp" ? ["hc", "hp"] : ["base"];
+  const keep = ["title", "contract", "cycle_start", "kwh_prev_cycle", "budget_month"];
+  const base = LINKYFACTURECARD_FIELDS.filter((f) => keep.includes(f.name) || f === THEME_SELECT);
+  const i = base.findIndex((f) => f.name === "cycle_start") + 1;
+  return [...base.slice(0, i),
+    ...postes.map((p) => ({ name: `price_${p}`, selector: { text: {} } })),
+    { name: "subscription_month", selector: { text: {} } },
+    { type: "expandable", name: "energy_entities", title: "Mes capteurs de consommation (kWh)", flatten: true,
+      schema: FACTURE_PERIODS.flatMap(([per]) => postes.map((p) => ({ name: `energy_${p}_${per}`, selector: { entity: { domain: "sensor" } } }))) },
+    ...base.slice(i)];
+};
+const FACTURE_ENERGY_LABELS = Object.fromEntries(FACTURE_PERIODS.flatMap(([per, l]) => [["hc", "Heures creuses"], ["hp", "Heures pleines"], ["base", "Base"]].map(([p, pl]) => [`energy_${p}_${per}`, `${pl} : ${l}`])));
+const LinkyFactureCardEditor = makeEditor(LINKYFACTURECARD_SCHEMA, { ...FACTURE_ENERGY_LABELS, energy_entities: "Mes capteurs de consommation (kWh)", contract: "Contrat", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", title: "Titre", cycle_start: "Début du cycle de facturation (MM-JJ, ex. 10-01)", cost_cycle: "Coût total du cycle (abonnement compris)", energy_cycle: "Coût énergie du cycle", cost_month: "Coût total du mois", energy_month: "Coût énergie du mois", cost_day: "Coût total aujourd’hui", estimate_month: "Estimation du mois", subscription_month: "Abonnement mensuel TTC (nombre ou entité)", kwh_cycle: "Énergie du cycle (kWh)", kwh_prev_cycle: "Énergie du cycle précédent (kWh)", kwh_month: "Énergie du mois (kWh)", kwh_day: "Énergie aujourd’hui (kWh)", budget_month: "Budget mensuel (facultatif)", theme: "Couleurs de la carte" }, LinkyFactureCard.DEFAULTS);
 const TEMPO_ONLY = ["prefix", "suffix_day", "suffix_month", "suffix_cycle", "price_prefix", "source_prefix", "fallback_prefix", "current"];
 /** Champs de l'éditeur selon le contrat : Tempo (préfixes des capteurs) ou HC/HP et Base (prix saisis). */
 const byContract = (list) => (cfg) => {

@@ -123,6 +123,28 @@ La jauge passe à l'orange à 70 % et au rouge à 90 % de la puissance souscrite
 
 La **projection** ramène le coût du cycle à 365 jours **au rythme actuel**. Elle n'anticipe ni l'hiver ni les jours rouges : en début de cycle, elle sous-estime donc la facture d'un logement chauffé à l'électricité.
 
+**Sans capteurs de coût (HC/HP ou Base)** : choisissez le contrat `hchp` ou `base` dans l'éditeur. La carte calcule alors elle-même le coût avec vos kWh, le prix du kWh de chaque poste et l'abonnement mensuel :
+
+```yaml
+type: custom:linky-facture-card
+contract: hchp
+cycle_start: "10-01"
+price_hc: input_number.edf_tarif_hc   # ou un nombre, ex. 0.1696
+price_hp: input_number.edf_tarif_hp
+subscription_month: 15.65             # abonnement TTC par mois, nombre ou entité
+energy_hc_jour: sensor.conso_hc_jour  # kWh du jour, du mois et du cycle (ou de l'année)
+energy_hp_jour: sensor.conso_hp_jour
+energy_hc_mois: sensor.conso_hc_mois
+energy_hp_mois: sensor.conso_hp_mois
+energy_hc_annee: sensor.conso_hc_annee
+energy_hp_annee: sensor.conso_hp_annee
+```
+
+- **Cycle** : énergie du cycle (capteurs `…_annee`, par exemple des utility_meter remis à zéro au début du cycle) au prix de chaque poste, plus l'abonnement au prorata des jours écoulés.
+- **Mois** : énergie du mois plus un mois d'abonnement ; **Estimation du mois** : énergie du mois ramenée au mois entier, plus l'abonnement.
+- **Aujourd'hui** : énergie du jour plus un jour d'abonnement.
+- En Base : `price_base`, `energy_base_jour`, `energy_base_mois`, `energy_base_annee`.
+
 ### Contrats heures creuses / heures pleines et Base
 
 Les cartes **Énergie par poste**, **Prix** et **Puissance** fonctionnent aussi avec un contrat **heures creuses / heures pleines** ou **Base** (Tarif Bleu ou offre de marché) : choisissez le contrat dans l'éditeur (`contract`) et saisissez le prix TTC du kWh.
