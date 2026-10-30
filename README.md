@@ -29,11 +29,11 @@
 
 # Cartes Linky Énergie
 
-**Six cartes Lovelace indépendantes, dans un seul fichier**, pour suivre l'énergie d'un contrat **EDF Tempo**, **heures creuses / heures pleines** ou **Base** dans Home Assistant, et l'état des services Enedis. Elles ont le style des cartes MyElectricalData new ([Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new)) : thème bleu nuit, version claire, ou thème Home Assistant.
+**Sept cartes Lovelace indépendantes, dans un seul fichier**, pour suivre l'énergie d'un contrat **EDF Tempo**, **heures creuses / heures pleines** ou **Base** dans Home Assistant, l'état des services Enedis et l'intensité carbone du réseau. Elles ont le style des cartes MyElectricalData new ([Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new)) : thème bleu nuit, version claire, ou thème Home Assistant.
 
 Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez avec son propre type. Elles ne remplacent aucune autre carte.
 
-**[▶ Essayer la démo en ligne](https://marlboro62.github.io/linky-energie-cards/docs/demo.html)** : les 6 cartes avec des données simulées, thèmes clair et sombre, dépassement de puissance, écart de prix, compteurs incohérents, incident Enedis… et la configuration YAML à copier.
+**[▶ Essayer la démo en ligne](https://marlboro62.github.io/linky-energie-cards/docs/demo.html)** : les 7 cartes avec des données simulées, thèmes clair et sombre, dépassement de puissance, écart de prix, compteurs incohérents, incident Enedis… et la configuration YAML à copier.
 
 | Type | Carte |
 | --- | --- |
@@ -42,6 +42,7 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 | `custom:linky-tempo-postes-card` | **Énergie par poste** : kWh, part, prix et coût des 6 postes Tempo, des postes HC et HP, ou en Base |
 | `custom:linky-tempo-prix-card` | **Prix** : prix TTC des 6 postes Tempo (avec vérification de la source), des postes HC et HP, ou en Base, poste en cours |
 | `custom:linky-cycle-card` | **Contrôle du cycle** : baselines des compteurs, automatisations et scripts de maintenance |
+| `custom:linky-carbone-card` | **Intensité carbone** : CO₂ par kWh du réseau en ce moment (Electricity Maps), part fossile, meilleur moment, courbe 24 h, CO₂ de la maison |
 | `custom:linky-enedis-status-card` | **État des services Enedis** : API Data Connect en service ou indisponibles, incident en cours |
 
 | Puissance | Facture | Énergie par poste |
@@ -55,6 +56,10 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 | Énergie HC / HP | Prix HC / HP | Énergie en Base |
 | --- | --- | --- |
 | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/hchp-postes.png" alt="Énergie HC / HP" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/hchp-prix.png" alt="Prix HC / HP" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/base-postes.png" alt="Énergie en Base" width="300"> |
+
+| Intensité carbone | Réseau carboné | Intensité carbone (clair) |
+| --- | --- | --- |
+| <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/carbone.png" alt="Intensité carbone" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/carbone-carbone.png" alt="Réseau carboné" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/carbone-clair.png" alt="Intensité carbone, clair" width="300"> |
 
 *Aperçus réalisés avec des valeurs fictives.*
 
@@ -169,6 +174,27 @@ Le coût affiché est l'énergie du poste multipliée par son **prix actuel**, h
 **Avec MyElectricalData seul**, sans capteurs de prix à vous, la carte affiche directement les prix publiés par MyElectricalData (et la valeur de secours si MyElectricalData n'en publie pas) : il n'y a rien à créer.
 
 Sous chaque prix, la carte indique sa source : **MyElectricalData**, **valeur de secours** ou **autre source**. Elle affiche une alerte si la source MyElectricalData est indisponible ou si elle diffère de la valeur de secours, ce qui signale en général un changement de tarif à reporter.
+
+### Intensité carbone — `custom:linky-carbone-card`
+
+```yaml
+type: custom:linky-carbone-card
+energy_today: sensor.consommation_du_jour   # facultatif : CO₂ de la maison
+```
+
+La carte lit l'intégration **Electricity Maps** (anciennement CO2 Signal) de Home Assistant, trouvée seule :
+
+- **En ce moment** : grammes de CO₂ par kWh de l'électricité du réseau, en couleur (très faible sous 50, faible sous 150, moyenne sous 300, élevée sous 500, très élevée au-delà) ;
+- **mix** : part bas carbone (nucléaire, renouvelables) et part fossile ;
+- **meilleur moment** et **pic** des dernières heures, avec la courbe des moyennes horaires (statistiques de Home Assistant), l'heure la plus verte encadrée ;
+- **CO₂ de la maison** aujourd'hui, si `energy_today` (kWh du jour) est indiqué : kWh × intensité moyenne.
+
+| Option | Rôle | Défaut |
+| --- | --- | --- |
+| `intensity` | Intensité carbone (gCO₂eq/kWh) | trouvée seule |
+| `fossil` | Part d'énergies fossiles (%) | trouvée seule |
+| `energy_today` | Consommation de la maison aujourd'hui (kWh) | — |
+| `hours` | Heures affichées dans la courbe (6 à 168) | `24` |
 
 ### Contrôle du cycle — `custom:linky-cycle-card`
 

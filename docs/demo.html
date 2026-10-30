@@ -96,7 +96,7 @@
       <h2>Carte</h2>
       <div class="ctl"><div class="seg" data-key="card">
         <button data-v="puissance">Puissance</button><button data-v="facture">Facture</button><button data-v="postes">Énergie par poste</button>
-        <button data-v="prix">Prix Tempo</button><button data-v="cycle">Contrôle du cycle</button><button data-v="enedis">Services Enedis</button><button data-v="all">Les 6</button></div></div>
+        <button data-v="prix">Prix Tempo</button><button data-v="cycle">Contrôle du cycle</button><button data-v="enedis">Services Enedis</button><button data-v="carbone">Intensité carbone</button><button data-v="all">Les 7</button></div></div>
 
       <h2>Affichage</h2>
       <div class="ctl"><div class="ctl-l">Page</div><div class="seg" data-key="page">
@@ -124,6 +124,8 @@
         <button data-v="ok"><i class="sw green"></i>Concordante</button><button data-v="diff"><i class="sw orange"></i>Écart</button><button data-v="off"><i class="sw red"></i>Indisponible</button></div></div>
       <div class="ctl" data-for="cycle all"><div class="ctl-l">Compteurs du cycle</div><div class="seg" data-key="cycle">
         <button data-v="ok"><i class="sw green"></i>Cohérents</button><button data-v="gap"><i class="sw orange"></i>Écart avec le mois</button><button data-v="zero"><i class="sw red"></i>Baseline à 0</button></div></div>
+      <div class="ctl" data-for="carbone all"><div class="ctl-l">Réseau électrique</div><div class="seg" data-key="co2">
+        <button data-v="low"><i class="sw green"></i>Bas carbone</button><button data-v="mid"><i class="sw orange"></i>Moyen</button><button data-v="high"><i class="sw red"></i>Carboné</button></div></div>
       <div class="ctl" data-for="enedis all"><div class="ctl-l">Services Enedis DataHub</div><div class="seg" data-key="enedis">
         <button data-v="up"><i class="sw green"></i>En service</button><button data-v="incident"><i class="sw red"></i>Incident</button><button data-v="unknown"><i class="sw orange"></i>Page illisible</button></div></div>
     </aside>
@@ -160,7 +162,7 @@
 
   const TYPES = {
     puissance: "linky-puissance-card", facture: "linky-facture-card", postes: "linky-tempo-postes-card",
-    prix: "linky-tempo-prix-card", cycle: "linky-cycle-card", enedis: "linky-enedis-status-card",
+    prix: "linky-tempo-prix-card", cycle: "linky-cycle-card", enedis: "linky-enedis-status-card", carbone: "linky-carbone-card",
   };
   const ENEDIS = ["authorize", "services_souscrits", "mesures", "donnees_generales", "alimentation",
     "situation_contractuelle", "synthese_contractuelle", "situation_comptage"];
@@ -174,7 +176,7 @@
   const BASE = { bleu_hc: 13958.9, bleu_hp: 11875.1, blanc_hc: 1900.8, blanc_hp: 1138.0, rouge_hc: 446.6, rouge_hp: 484.2 };
 
   const defaults = { card: "all", page: "dark", theme: "v2", width: "mobile", poste: "HP BLEU", load: "0.42", kva: "9",
-    budget: "none", period: "mois", prices: "ok", cycle: "ok", enedis: "up", contract: "tempo" };
+    budget: "none", period: "mois", prices: "ok", cycle: "ok", enedis: "up", contract: "tempo", co2: "low" };
   let state = { ...defaults };
   try { state = { ...defaults, ...JSON.parse(localStorage.getItem("linky-energie-demo") || "{}") }; } catch (e) { /* ignoré */ }
 
@@ -229,6 +231,10 @@
     for (const [per, [hc, hp]] of Object.entries(MED)) {
       st[`${pdl}${per}_hc`] = S(hc, "kWh"); st[`${pdl}${per}_hp`] = S(hp, "kWh");
     }
+    // intensité carbone (Electricity Maps), valeurs fictives
+    const co2 = { low: [29, 3.1], mid: [180, 21.4], high: [420, 58.2] }[state.co2];
+    st["sensor.electricity_maps_intensite_carbone"] = { state: String(co2[0]), attributes: { unit_of_measurement: "gCO2eq/kWh", country_code: "FR", friendly_name: "Intensité carbone" }, last_changed: "demo" };
+    st["sensor.electricity_maps_pourcentage_d_energies_fossiles_du_reseau"] = { state: String(co2[1]), attributes: { unit_of_measurement: "%", country_code: "FR" }, last_changed: "demo" };
     const seen = new Date(Date.now() - 4 * 60e3).toISOString(); // incident ou page illisible : changement récent
     ENEDIS.forEach((k, i) => {
       const v = state.enedis === "unknown" ? "unavailable" : state.enedis === "incident" && [2, 3, 6].includes(i) ? "down" : "up";
@@ -248,6 +254,7 @@
         : { type: "custom:linky-tempo-prix-card", contract: state.contract, ...(state.contract === "hchp" ? { price_hc: 0.1612, price_hp: 0.2088 } : { price_base: 0.1940 }), theme: t },
       cycle: { type: "custom:linky-cycle-card", theme: t },
       enedis: { type: "custom:linky-enedis-status-card", theme: t },
+      carbone: { type: "custom:linky-carbone-card", intensity: "sensor.electricity_maps_intensite_carbone", fossil: "sensor.electricity_maps_pourcentage_d_energies_fossiles_du_reseau", energy_today: "sensor.tempo_consommation_totale_aujourd_hui", theme: t },
     };
     return state.card === "all" ? Object.values(c) : [c[state.card]];
   }
@@ -272,7 +279,16 @@
       toastTimer = setTimeout(() => toast.classList.remove("on"), 2600);
     },
     // Pic du jour : statistique « max » simulée
-    callWS: async (msg) => ({ [msg.statistic_ids[0]]: [{ start: Date.now() - 6 * 3600e3, max: Math.round(Number(state.kva) * 1000 * 0.71) }] }),
+    callWS: async (msg) => {
+      const id = msg.statistic_ids[0];
+      // intensité carbone : 24 moyennes horaires fictives, plus basses la nuit
+      if (/intensite_carbone/.test(id)) {
+        const base = { low: 30, mid: 170, high: 400 }[state.co2];
+        return { [id]: Array.from({ length: 24 }, (_, i) => { const t = Date.now() - (24 - i) * 3600e3; const h = new Date(t).getHours();
+          return { start: t, mean: Math.round(base * (0.75 + 0.45 * Math.max(0, Math.sin(((h - 6) / 24) * 2 * Math.PI)) + (h >= 18 && h <= 20 ? 0.25 : 0))) }; }) };
+      }
+      return { [id]: [{ start: Date.now() - 6 * 3600e3, max: Math.round(Number(state.kva) * 1000 * 0.71) }] };
+    },
   });
 
   function render() {

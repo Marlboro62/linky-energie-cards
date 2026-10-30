@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.3.0-beta.2";
+const CARD_VERSION = "0.3.0-beta.3";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -895,6 +895,24 @@ class LinkyEnedisStatusCard extends EnergyBase {
 }
 
 const EN_STYLE = `<style>
+.co2-hero { position: relative; }
+.c-1 { --co2: #2fbf71; } .c-2 { --co2: #96d21f; } .c-3 { --co2: #f0c43a; } .c-4 { --co2: #f08a3b; } .c-5 { --co2: #e04848; }
+.co2-hero .en-hero-v { color: var(--co2, var(--med-text)); }
+.co2-lvl { display: inline-flex; align-items: center; gap: 6px; font-weight: 700; font-size: .85rem; color: var(--co2); }
+.co2-lvl i { width: 9px; height: 9px; border-radius: 50%; background: var(--co2); }
+.co2-scale { display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; margin-top: 8px; }
+.co2-scale i { height: 6px; border-radius: 4px; background: var(--co2); opacity: .3; }
+.co2-scale i.on { opacity: 1; }
+.co2-mix { margin: 10px 12px 0; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--med-line); cursor: pointer; }
+.co2-mix-h { display: flex; justify-content: space-between; font-size: .74rem; color: var(--med-muted); }
+.co2-mix-h b { color: var(--med-text); font-size: .85rem; }
+.co2-bar { margin: 6px 0; height: 10px; }
+.co2-bar .lc { background: #2fbf71; } .co2-bar .fo { background: #8a6d5b; }
+.co2-chart svg { height: 90px; }
+.co2-chart rect { fill: var(--co2); opacity: .55; }
+.co2-chart rect.best { opacity: 1; stroke: var(--med-text); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.co2-l { fill: none; stroke: var(--med-text); stroke-width: 1.2; opacity: .5; vector-effect: non-scaling-stroke; }
+.co2-ax { display: flex; justify-content: space-between; font-size: .68rem; color: var(--med-muted); margin: 2px 4px 0; }
 ha-card { display: block; padding-bottom: 14px; }
 ha-card.en-over { border-color: var(--t-red); }
 .en-alert, .en-ok { display: flex; gap: 10px; align-items: center; margin: 4px 12px 0; padding: 10px 12px; border-radius: 12px; font-size: .84rem;
@@ -989,6 +1007,136 @@ ha-card.light .t-white .dot { box-shadow: inset 0 0 0 1px #aab3c0; }
 .en-foot a ha-icon { --mdc-icon-size: 14px; }
 .en-alert code { font-size: .78rem; }
 </style>`;
+
+/* ------------------------------------------------------- 7. intensité carbone */
+
+/** Échelle de couleur de l'intensité carbone (gCO₂eq/kWh), celle d'Electricity Maps simplifiée. */
+const CO2_LEVELS = [[50, "Très faible", "c-1"], [150, "Faible", "c-2"], [300, "Moyenne", "c-3"], [500, "Élevée", "c-4"], [Infinity, "Très élevée", "c-5"]];
+const co2Level = (v) => (v === null ? null : CO2_LEVELS.find(([max]) => v < max));
+
+class LinkyCarboneCard extends EnergyBase {
+  static DEFAULTS = {
+    title: "Intensité carbone",
+    intensity: "", // gCO2eq/kWh (Electricity Maps, trouvé seul)
+    fossil: "", // % d'énergies fossiles du réseau
+    energy_today: "", // consommation du jour (kWh), pour le CO₂ de la maison
+    hours: 24,
+    theme: "v2",
+  };
+
+  static getConfigElement() {
+    return document.createElement("linky-carbone-card-editor");
+  }
+
+  /** Capteurs Electricity Maps (co2signal) : intensité et part fossile, trouvés par l'unité ou la plateforme. */
+  _ids2() {
+    const c = this._config, hass = this._hass;
+    const reg = hass?.entities || {};
+    const all = Object.keys(hass?.states || {}).filter((id) => id.startsWith("sensor."));
+    const plat = all.filter((id) => reg[id]?.platform === "co2signal");
+    const intensity = c.intensity || plat.find((id) => /co2|g\/kwh/i.test(this._unit(id))) || all.find((id) => /gco2(eq)?\/kwh/i.test(this._unit(id))) || null;
+    const fossil = c.fossil || plat.find((id) => this._unit(id) === "%") || null;
+    return { intensity, fossil };
+  }
+
+  _watch() {
+    const { intensity, fossil } = this._ids2();
+    return [intensity, fossil, this._config.energy_today].filter(Boolean);
+  }
+
+  _extraSig() {
+    return this._hist ? this._hist.at : "";
+  }
+
+  connectedCallback() {
+    clearInterval(this._timer);
+    this._timer = setInterval(() => this._loadHist(), 15 * 60 * 1000);
+  }
+
+  disconnectedCallback() {
+    clearInterval(this._timer);
+  }
+
+  set hass(hass) {
+    const first = !this._hass;
+    super.hass = hass;
+    if (first || !this._hist) this._loadHist();
+  }
+
+  /** Moyennes horaires des dernières heures (statistiques longue durée de Home Assistant). */
+  async _loadHist() {
+    const { intensity } = this._ids2();
+    if (!intensity || !this._hass?.callWS || this._loading) return;
+    this._loading = true;
+    const hours = Math.max(6, Math.min(168, Number(this._config.hours) || 24));
+    try {
+      const res = await this._hass.callWS({
+        type: "recorder/statistics_during_period",
+        start_time: new Date(Date.now() - hours * 3600e3).toISOString(),
+        statistic_ids: [intensity],
+        period: "hour",
+        types: ["mean"],
+      });
+      const pts = (res?.[intensity] || []).map((r) => ({ t: typeof r.start === "number" ? r.start : Date.parse(r.start), v: r.mean })).filter((p) => Number.isFinite(p.v));
+      this._hist = { pts, at: Date.now() };
+    } catch (e) {
+      this._hist = { pts: [], at: Date.now() };
+    } finally {
+      this._loading = false;
+      this._render(true);
+    }
+  }
+
+  _content() {
+    const c = this._config;
+    const { intensity, fossil } = this._ids2();
+    if (!intensity) {
+      return { body: `<div class="empty">Intensité carbone introuvable<span>Ajoutez l'intégration Electricity Maps (CO2 Signal) dans Paramètres › Appareils et services, ou choisissez le capteur dans l'éditeur.</span></div>` };
+    }
+    const v = this._num(intensity);
+    const lvl = co2Level(v);
+    const fos = this._num(fossil);
+    const pts = this._hist?.pts || [];
+    const vals = pts.map((p) => p.v);
+    const min = vals.length ? pts.reduce((a, b) => (b.v < a.v ? b : a)) : null;
+    const max = vals.length ? pts.reduce((a, b) => (b.v > a.v ? b : a)) : null;
+    const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    const hh = (t) => new Date(t).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" });
+    const kwh = this._num(c.energy_today);
+    const kg = kwh !== null && (avg ?? v) !== null ? (kwh * (avg ?? v)) / 1000 : null;
+    const zone = this._st(intensity)?.attributes?.country_code;
+
+    // courbe des moyennes horaires, colorée par niveau
+    let chart = "";
+    if (pts.length > 2) {
+      const W = 300, H = 70, top = Math.max(...vals) * 1.15 || 1;
+      const x = (i) => (i / (pts.length - 1)) * W, y = (val) => H - (val / top) * H;
+      const line = pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(p.v).toFixed(1)}`).join("");
+      const bars = pts.map((p, i) => `<rect class="${co2Level(p.v)[2]}${p === min ? " best" : ""}" x="${(x(i) - W / pts.length / 2 + 0.6).toFixed(1)}" y="${y(p.v).toFixed(1)}" width="${Math.max(1, W / pts.length - 1.2).toFixed(1)}" height="${(H - y(p.v)).toFixed(1)}" rx="1"><title>${hh(p.t)} · ${fmt(p.v, 0)} g/kWh</title></rect>`).join("");
+      chart = `<div class="chart co2-chart"><div class="chart-h"><span>${pts.length} dernières heures, moyenne par heure</span><span>${fmt(avg, 0)} g/kWh en moyenne</span></div>
+        <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="Intensité carbone par heure">${bars}<path class="co2-l" d="${line}"/></svg>
+        <div class="co2-ax"><span>${hh(pts[0].t)}</span><span>${hh(pts[pts.length - 1].t)}</span></div></div>`;
+    }
+    const body = `
+      <div class="en-hero co2-hero ${lvl ? lvl[2] : ""}" data-entity="${esc(intensity)}">
+        <div class="en-hero-l">Électricité du réseau${zone ? ` (${esc(zone)})` : ""}, en ce moment</div>
+        <div class="en-hero-v">${v !== null ? fmt(v, 0) : "—"}<span>gCO₂eq/kWh</span></div>
+        ${lvl ? `<div class="co2-lvl"><i></i>${lvl[1]}</div>` : ""}
+        <div class="co2-scale">${CO2_LEVELS.map(([m, l, cls]) => `<i class="${cls}${lvl && lvl[2] === cls ? " on" : ""}" title="${l}${Number.isFinite(m) ? ` (moins de ${m})` : ""}"></i>`).join("")}</div>
+      </div>
+      ${fos !== null ? `<div class="co2-mix" data-entity="${esc(fossil)}"><div class="co2-mix-h"><span>Bas carbone (nucléaire, renouvelables)</span><span>Fossiles</span></div>
+        <div class="bar co2-bar"><i class="lc" style="width:${Math.max(0, 100 - fos)}%"></i><i class="fo" style="width:${Math.min(100, fos)}%"></i></div>
+        <div class="co2-mix-h"><b>${fmt(100 - fos, 1)} %</b><b>${fmt(fos, 1)} %</b></div></div>` : ""}
+      ${min || kg !== null ? `<div class="tiles en-tiles">
+        ${min ? `<div class="tile"><div class="tile-l">Meilleur moment</div><div class="tile-v">${fmt(min.v, 0)}<span>g/kWh</span></div><div class="tile-n">à ${hh(min.t)}</div></div>` : ""}
+        ${max ? `<div class="tile"><div class="tile-l">Pic</div><div class="tile-v">${fmt(max.v, 0)}<span>g/kWh</span></div><div class="tile-n">à ${hh(max.t)}</div></div>` : ""}
+        ${kg !== null ? `<div class="tile" data-entity="${esc(c.energy_today)}"><div class="tile-l">CO₂ de la maison aujourd'hui</div><div class="tile-v">${kg < 1 ? `${fmt(kg * 1000, 0)}<span>g</span>` : `${fmt(kg, 1)}<span>kg</span>`}</div><div class="tile-n">${fmt(kwh, 1)} kWh × ${fmt(avg ?? v, 0)} g/kWh</div></div>` : ""}
+      </div>` : ""}
+      ${chart}
+      <footer>Données Electricity Maps. Les heures les plus vertes sont les meilleures pour lancer les gros appareils.</footer>`;
+    return { sub: lvl ? `Carbone : ${lvl[1].toLowerCase()}` : "Réseau électrique", body };
+  }
+}
 
 /* ------------------------------------------------------------------ style */
 
@@ -1252,6 +1400,15 @@ const LINKYTEMPOPRIXCARD_FIELDS = [
 ];
 const LINKYTEMPOPRIXCARD_SCHEMA = byContract(LINKYTEMPOPRIXCARD_FIELDS);
 const LinkyTempoPrixCardEditor = makeEditor(LINKYTEMPOPRIXCARD_SCHEMA, { title: "Titre", contract: "Contrat", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", price_prefix: "Préfixe des prix utilisés (<couleur>_<hc|hp>)", source_prefix: "Préfixe des prix MyElectricalData (<blue|white|red>_<hc|hp>)", fallback_prefix: "Préfixe des prix de secours", current: "Prix du kWh en cours", tarif: "Période tarifaire en cours (Tempo ou PTEC HC / HP), trouvée seule sinon", theme: "Couleurs de la carte" }, LinkyTempoPrixCard.DEFAULTS);
+const LINKYCARBONECARD_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "intensity", selector: { entity: { domain: "sensor" } } },
+  { name: "fossil", selector: { entity: { domain: "sensor" } } },
+  { name: "energy_today", selector: { entity: { domain: "sensor" } } },
+  { name: "hours", selector: { number: { min: 6, max: 168, step: 1, mode: "box", unit_of_measurement: "h" } } },
+  THEME_SELECT,
+];
+const LinkyCarboneCardEditor = makeEditor(LINKYCARBONECARD_SCHEMA, { title: "Titre", intensity: "Intensité carbone (gCO₂eq/kWh), trouvée seule", fossil: "Part d'énergies fossiles du réseau (%), trouvée seule", energy_today: "Consommation de la maison aujourd'hui (kWh), pour son CO₂ (facultatif)", hours: "Heures affichées dans la courbe", theme: "Couleurs de la carte" }, LinkyCarboneCard.DEFAULTS);
 const LINKYCYCLECARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
   { name: "control", selector: { entity: { domain: "sensor" } } },
@@ -1302,6 +1459,9 @@ if (typeof customElements !== "undefined") {
   define("linky-cycle-card-editor", LinkyCycleCardEditor);
   card("linky-cycle-card", "Carte Linky Contrôle du cycle", "Baselines des compteurs Tempo, automatisations du cycle et scripts de maintenance (confirmation en 2 clics).");
   define("linky-enedis-status-card", LinkyEnedisStatusCard);
+  define("linky-carbone-card", LinkyCarboneCard);
+  define("linky-carbone-card-editor", LinkyCarboneCardEditor);
+  card("linky-carbone-card", "Carte Intensité carbone", "Intensité carbone et part fossile de l'électricité du réseau (Electricity Maps), meilleur moment, courbe et CO₂ de la maison.");
   define("linky-enedis-status-card-editor", LinkyEnedisStatusCardEditor);
   card("linky-enedis-status-card", "Carte État des services Enedis", "État des API Enedis DataHub (Data Connect) : incident en cours, service par service, heure du dernier changement, lien vers la page officielle.");
   console.info(`%c LINKY-ENERGIE-CARDS %c ${CARD_VERSION} `, "background:#96d21f;color:#1a2434;font-weight:700", "background:#1d93e3;color:#fff");
