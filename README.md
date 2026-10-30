@@ -186,7 +186,7 @@ La carte lit l'intégration **Electricity Maps** (anciennement CO2 Signal) de Ho
 
 - **En ce moment** : grammes de CO₂ par kWh de l'électricité du réseau, en couleur (très faible sous 50, faible sous 150, moyenne sous 300, élevée sous 500, très élevée au-delà) ;
 - **mix** : part bas carbone (nucléaire, renouvelables) et part fossile ;
-- **meilleur moment** et **pic** des dernières heures, avec la courbe des moyennes horaires (statistiques de Home Assistant), l'heure la plus verte encadrée ;
+- **plus bas** et **plus haut** des dernières heures (mesures passées, Electricity Maps ne donne pas de prévision gratuite), avec la courbe des moyennes horaires (statistiques de Home Assistant), l'heure la plus verte encadrée ;
 - **CO₂ de la maison** aujourd'hui, si `energy_today` (kWh du jour) est indiqué : kWh × intensité moyenne.
 
 | Option | Rôle | Défaut |

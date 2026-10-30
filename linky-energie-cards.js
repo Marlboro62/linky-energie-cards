@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.3.0-beta.3";
+const CARD_VERSION = "0.3.0-beta.4";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -1128,12 +1128,12 @@ class LinkyCarboneCard extends EnergyBase {
         <div class="bar co2-bar"><i class="lc" style="width:${Math.max(0, 100 - fos)}%"></i><i class="fo" style="width:${Math.min(100, fos)}%"></i></div>
         <div class="co2-mix-h"><b>${fmt(100 - fos, 1)} %</b><b>${fmt(fos, 1)} %</b></div></div>` : ""}
       ${min || kg !== null ? `<div class="tiles en-tiles">
-        ${min ? `<div class="tile"><div class="tile-l">Meilleur moment</div><div class="tile-v">${fmt(min.v, 0)}<span>g/kWh</span></div><div class="tile-n">à ${hh(min.t)}</div></div>` : ""}
-        ${max ? `<div class="tile"><div class="tile-l">Pic</div><div class="tile-v">${fmt(max.v, 0)}<span>g/kWh</span></div><div class="tile-n">à ${hh(max.t)}</div></div>` : ""}
+        ${min ? `<div class="tile"><div class="tile-l">Plus bas sur ${pts.length} h</div><div class="tile-v">${fmt(min.v, 0)}<span>g/kWh</span></div><div class="tile-n">à ${hh(min.t)}</div></div>` : ""}
+        ${max ? `<div class="tile"><div class="tile-l">Plus haut sur ${pts.length} h</div><div class="tile-v">${fmt(max.v, 0)}<span>g/kWh</span></div><div class="tile-n">à ${hh(max.t)}</div></div>` : ""}
         ${kg !== null ? `<div class="tile" data-entity="${esc(c.energy_today)}"><div class="tile-l">CO₂ de la maison aujourd'hui</div><div class="tile-v">${kg < 1 ? `${fmt(kg * 1000, 0)}<span>g</span>` : `${fmt(kg, 1)}<span>kg</span>`}</div><div class="tile-n">${fmt(kwh, 1)} kWh × ${fmt(avg ?? v, 0)} g/kWh</div></div>` : ""}
       </div>` : ""}
       ${chart}
-      <footer>Données Electricity Maps. Les heures les plus vertes sont les meilleures pour lancer les gros appareils.</footer>`;
+      <footer>Données Electricity Maps, mesures passées (pas de prévision). Plus c'est vert, plus l'électricité du réseau est bas carbone.</footer>`;
     return { sub: lvl ? `Carbone : ${lvl[1].toLowerCase()}` : "Réseau électrique", body };
   }
 }
