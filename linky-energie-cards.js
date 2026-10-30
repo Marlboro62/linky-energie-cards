@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.3.0-beta.5";
+const CARD_VERSION = "0.3.0-beta.6";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -222,6 +222,7 @@ class LinkyPuissanceCard extends EnergyBase {
   static DEFAULTS = {
     title: "Puissance",
     power: "sensor.lixee_sinsts",
+    power_active: "", // puissance active en W (facturée), si le compteur la donne : coût réel et cos φ
     subscribed: "sensor.lixee_pref",
     subscribed_kva: "", // puissance souscrite saisie (kVA), si aucun capteur ne la donne
     contract: "tempo", // tempo, hchp ou base : choisit le prix du kWh en cours
@@ -243,7 +244,7 @@ class LinkyPuissanceCard extends EnergyBase {
 
   _watch() {
     const c = this._config;
-    return [c.power, c.subscribed, c.tarif, c.price, c.cost_rate, c.overrun, c.overruns_day, c.price_hc, c.price_hp, c.price_base]
+    return [c.power, c.power_active, c.subscribed, c.tarif, c.price, c.cost_rate, c.overrun, c.overruns_day, c.price_hc, c.price_hp, c.price_base]
       .filter((x) => typeof x === "string" && x.includes("."));
   }
 
@@ -304,6 +305,11 @@ class LinkyPuissanceCard extends EnergyBase {
     const c = this._config;
     const va = this._num(c.power);
     const unit = this._unit(c.power, "VA");
+    // puissance active (W) : capteur dédié, ou « power » lui-même s'il est en W. kW ramenés en W.
+    const toW = (id) => { const n = this._num(id); if (n === null) return null; return /^kw$/i.test(this._unit(id)) ? n * 1000 : n; };
+    const powerIsW = /^k?w$/i.test(unit);
+    const watts = c.power_active ? toW(c.power_active) : powerIsW ? toW(c.power) : null;
+    const cosPhi = c.power_active && va !== null && watts !== null && va > 0 && !powerIsW ? watts / va : null;
     // Puissance souscrite : saisie en kVA, sinon capteur en kVA (Lixee, PREF), en VA, ou en ampères (ISOUSC du mode historique : 45 A = 9 kVA)
     const typed = Number(String(c.subscribed_kva ?? "").replace(",", "."));
     const sub = this._num(c.subscribed);
@@ -318,7 +324,9 @@ class LinkyPuissanceCard extends EnergyBase {
     const { v: price, id: priceId } = this._currentPrice();
     const rate = this._num(c.cost_rate);
     const rateUnit = this._unit(c.cost_rate, "€/h");
-    const estRate = va !== null && price !== null ? (va / 1000) * price : null;
+    // coût estimé : puissance active si on l'a (réelle), sinon puissance apparente (VA, surestime le coût)
+    const estBase = watts ?? va;
+    const estRate = estBase !== null && price !== null ? (estBase / 1000) * price : null;
 
     const peak = this._peak;
     const peakPct = peak && subVA ? (peak.v / subVA) * 100 : null;
@@ -328,10 +336,11 @@ class LinkyPuissanceCard extends EnergyBase {
         <div class="en-hero-l">Puissance appelée</div>
         <div class="en-hero-v">${va !== null ? fmt(va, 0) : "—"}<span>${esc(unit)}</span></div>
         ${pct !== null ? `<div class="g-bar ${lvl}"><i style="width:${Math.min(100, pct)}%"></i>${[50, 70, 90].map((m) => `<b class="tick" style="left:${m}%"></b>`).join("")}${peakPct !== null ? `<b class="peak" style="left:${Math.min(100, peakPct)}%" title="Pic du jour"></b>` : ""}</div>
-        <div class="g-n"><span class="g-k"><b>${fmt(pct, 0)} %</b> de la puissance souscrite</span><span>${fmt(subVA / 1000, subVA % 1000 ? 1 : 0)} kVA</span></div>` : ""}
+        <div class="g-n"><span class="g-k"><b>${powerIsW ? "≈ " : ""}${fmt(pct, 0)} %</b> de la puissance souscrite${powerIsW ? " (W comparés aux kVA)" : ""}</span><span>${fmt(subVA / 1000, subVA % 1000 ? 1 : 0)} kVA</span></div>` : ""}
       </div>
       <div class="tiles en-tiles">
-        ${rate !== null || estRate !== null ? `<div class="tile" data-entity="${esc(rate !== null ? c.cost_rate : priceId)}"><div class="tile-l">Coût en ce moment</div><div class="tile-v">${eur(rate ?? estRate)}<span>${esc(rate !== null ? String(rateUnit).replace("€", "").trim() : "/h")}</span></div><div class="tile-n">${rate === null ? "estimé : puissance × prix du kWh" : `≈ ${eur((rate ?? 0) * 24)} sur 24 h à ce rythme`}</div></div>` : ""}
+        ${rate !== null || estRate !== null ? `<div class="tile" data-entity="${esc(rate !== null ? c.cost_rate : priceId)}"><div class="tile-l">Coût en ce moment</div><div class="tile-v">${eur(rate ?? estRate)}<span>${esc(rate !== null ? String(rateUnit).replace("€", "").trim() : "/h")}</span></div><div class="tile-n">${rate === null ? (watts !== null ? "puissance active × prix du kWh" : "estimé en VA : ajoutez un capteur en W pour le coût réel") : `≈ ${eur((rate ?? 0) * 24)} sur 24 h à ce rythme`}</div></div>` : ""}
+        ${watts !== null && !powerIsW ? `<div class="tile" data-entity="${esc(c.power_active)}"><div class="tile-l">Puissance active</div><div class="tile-v">${fmt(watts, 0)}<span>W</span></div><div class="tile-n">${cosPhi !== null ? `cos φ ${fmt(cosPhi, 2)} · ce qui est facturé` : "ce qui est facturé"}</div></div>` : ""}
         ${peak ? `<div class="tile" data-entity="${esc(c.power)}"><div class="tile-l">Pic du jour</div><div class="tile-v">${fmt(peak.v, 0)}<span>${esc(unit)}</span></div><div class="tile-n">à ${new Date(peak.t).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}${peakPct !== null ? ` · ${fmt(peakPct, 0)} %` : ""}</div></div>` : ""}
         ${nOver !== null ? `<div class="tile ${nOver > 0 ? "t-warn" : ""}" data-entity="${esc(c.overruns_day)}"><div class="tile-l">Dépassements aujourd'hui</div><div class="tile-v">${fmt(nOver, 0)}</div><div class="tile-n">${nOver > 0 ? "pensez à décaler les gros appareils" : "aucun"}</div></div>` : ""}
       </div>`;
@@ -1346,6 +1355,7 @@ const LINKYPUISSANCECARD_FIELDS = [
   { name: "title", selector: { text: {} } },
   { name: "contract", selector: { select: { mode: "dropdown", options: [{ value: "tempo", label: "Tempo" }, { value: "hchp", label: "Heures creuses / heures pleines" }, { value: "base", label: "Base" }] } } },
   { name: "power", selector: { entity: { domain: "sensor" } } },
+  { name: "power_active", selector: { entity: { domain: "sensor" } } },
   { name: "subscribed", selector: { entity: { domain: "sensor" } } },
   { name: "subscribed_kva", selector: { number: { min: 3, max: 36, step: 3, mode: "box", unit_of_measurement: "kVA" } } },
   { name: "tarif", selector: { entity: { domain: "sensor" } } },
@@ -1365,7 +1375,7 @@ const LINKYPUISSANCECARD_SCHEMA = (cfg) => {
   const hide = k === "tempo" ? ["price_hc", "price_hp", "price_base"] : k === "hchp" ? ["price_base"] : ["price_hc", "price_hp"];
   return LINKYPUISSANCECARD_FIELDS.filter((f) => !hide.includes(f.name));
 };
-const LinkyPuissanceCardEditor = makeEditor(LINKYPUISSANCECARD_SCHEMA, { title: "Titre", power: "Puissance instantanée (VA ou W)", subscribed: "Puissance souscrite : capteur en kVA, ou ISOUSC en ampères (mode historique)", subscribed_kva: "Puissance souscrite saisie (kVA), si aucun capteur ne la donne", contract: "Contrat", tarif: "Période tarifaire en cours : poste Tempo (« HP BLEU ») ou PTEC (« HC.. »), trouvée seule sinon", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", price: "Prix du kWh en cours (capteur), utilisé si aucun prix n'est saisi ci-dessus", cost_rate: "Coût instantané (€/h)", overrun: "Dépassement de puissance (binary_sensor)", overruns_day: "Nombre de dépassements du jour", show_peak: "Afficher le pic du jour (statistiques HA)", theme: "Couleurs de la carte" }, LinkyPuissanceCard.DEFAULTS);
+const LinkyPuissanceCardEditor = makeEditor(LINKYPUISSANCECARD_SCHEMA, { title: "Titre", power: "Puissance apparente instantanée en VA (PAPP, SINSTS) : jauge face à la puissance souscrite", power_active: "Puissance active en W (facultatif) : coût en € réel et cos φ", subscribed: "Puissance souscrite : capteur en kVA, ou ISOUSC en ampères (mode historique)", subscribed_kva: "Puissance souscrite saisie (kVA), si aucun capteur ne la donne", contract: "Contrat", tarif: "Période tarifaire en cours : poste Tempo (« HP BLEU ») ou PTEC (« HC.. »), trouvée seule sinon", price_hc: "Prix du kWh en heures creuses, TTC (nombre ou entité)", price_hp: "Prix du kWh en heures pleines, TTC (nombre ou entité)", price_base: "Prix du kWh en option Base, TTC (nombre ou entité)", price: "Prix du kWh en cours (capteur), utilisé si aucun prix n'est saisi ci-dessus", cost_rate: "Coût instantané (€/h)", overrun: "Dépassement de puissance (binary_sensor)", overruns_day: "Nombre de dépassements du jour", show_peak: "Afficher le pic du jour (statistiques HA)", theme: "Couleurs de la carte" }, LinkyPuissanceCard.DEFAULTS);
 const LINKYFACTURECARD_SCHEMA = [
   { name: "title", selector: { text: {} } },
   { name: "cycle_start", selector: { text: {} } },

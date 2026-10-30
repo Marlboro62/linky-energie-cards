@@ -91,7 +91,8 @@ Toutes les cartes acceptent `title` et `theme` (`v2` bleu nuit MyElectricalData,
 
 | Option | Rôle | Défaut |
 | --- | --- | --- |
-| `power` | Puissance instantanée (VA ou W) | `sensor.lixee_sinsts` |
+| `power` | Puissance **apparente** instantanée en VA (PAPP, SINSTS) : c'est elle que la jauge compare à la puissance souscrite, car c'est elle qui fait couper le disjoncteur | `sensor.lixee_sinsts` |
+| `power_active` | Puissance **active** en W (facultatif) : celle qui est facturée. Le coût en ce moment devient réel, et la carte affiche la puissance active et le cos φ. Sans elle, le coût est estimé avec les VA et peut être bien plus haut que la réalité | — |
 | `subscribed` | Puissance souscrite : capteur en kVA, en VA, ou **ISOUSC en ampères** (mode historique : 45 A = 9 kVA) | `sensor.lixee_pref` |
 | `subscribed_kva` | Puissance souscrite saisie en kVA, si aucun capteur ne la donne (ex. `9`) | — |
 | `tarif` | Période tarifaire en cours : poste Tempo (« HP BLEU ») ou **PTEC** (« HC.. », « HP.. ») ; sans ce capteur, un capteur `…_ptec` ou de période tarifaire est trouvé seul | `sensor.lixee_current_price` |
