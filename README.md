@@ -46,11 +46,11 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 
 | Puissance | Facture | Énergie par poste |
 | --- | --- | --- |
-| ![Puissance](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/puissance.png) | ![Facture](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/facture.png) | ![Énergie par poste](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/tempo-postes.png) |
+| <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/puissance.png" alt="Puissance" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/facture.png" alt="Facture" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/tempo-postes.png" alt="Énergie par poste" width="300"> |
 
 | Prix Tempo | Contrôle du cycle | Facture (clair) |
 | --- | --- | --- |
-| ![Prix Tempo](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/tempo-prix.png) | ![Contrôle du cycle](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/cycle.png) | ![Facture claire](https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/facture-clair.png) |
+| <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/tempo-prix.png" alt="Prix Tempo" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/cycle.png" alt="Contrôle du cycle" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/facture-clair.png" alt="Facture claire" width="300"> |
 
 *Aperçus réalisés avec des valeurs fictives.*
 
