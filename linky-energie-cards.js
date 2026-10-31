@@ -13,7 +13,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.3.0";
+const CARD_VERSION = "0.4.0-beta.1";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -1090,7 +1090,7 @@ ha-card.en-over { border-color: var(--t-red); }
 .g-bar { position: relative; height: 10px; border-radius: 6px; background: var(--med-line); margin: 10px 0 6px; }
 .g-bar.cyc { height: 6px; }
 .g-bar i { display: block; height: 100%; border-radius: 6px; background: var(--med-muted); }
-.g-bar.b-ok i { background: linear-gradient(90deg, var(--med-blue), var(--med-green)); }
+.g-bar.b-ok i { background: linear-gradient(90deg, var(--med-accent, var(--med-blue)), var(--med-green)); }
 .g-bar.b-warn i { background: #f0a33a; } .g-bar.b-alert i { background: var(--t-red); }
 .g-bar .tick { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--med-bg); opacity: .7; }
 .g-bar .peak { position: absolute; top: -4px; bottom: -4px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: var(--med-text); }
@@ -1103,7 +1103,7 @@ ha-card.en-over { border-color: var(--t-red); }
 em.warn { color: var(--med-up); font-style: normal; font-weight: 600; } em.ok { color: var(--med-down); font-style: normal; font-weight: 600; }
 .en-tabs { display: flex; gap: 4px; margin: 6px 12px 0; padding: 3px; border-radius: 10px; background: var(--med-surface); border: 1px solid var(--med-line); }
 .en-tabs button { flex: 1; border: 0; background: none; color: var(--med-muted); font: inherit; font-size: .8rem; padding: 6px 0; border-radius: 8px; cursor: pointer; }
-.en-tabs button.on { background: var(--med-blue); color: #fff; font-weight: 600; }
+.en-tabs button.on { background: var(--med-accent, var(--med-blue)); color: var(--med-on-accent, #fff); font-weight: 600; }
 .en-sum { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 12px 0; }
 .en-sum > div { flex: 1 1 140px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--med-line); display: flex; flex-direction: column; font-size: .78rem; color: var(--med-muted); }
 .en-sum > div[data-entity] { cursor: pointer; }
@@ -1122,7 +1122,7 @@ ha-card.light .bar .s-white.s-HC, ha-card.light .sq.s-white.s-HC { background: #
 .en-t tr.cur td { background: var(--med-surface); font-weight: 700; }
 .en-t td.bad { color: var(--t-red); font-weight: 700; }
 .en-t tfoot td { font-weight: 700; border-top: 2px solid var(--med-line); }
-.now { margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: .66rem; font-weight: 600; background: var(--med-blue); color: #fff; vertical-align: 1px; }
+.now { margin-left: 6px; padding: 0 6px; border-radius: 999px; font-size: .66rem; font-weight: 600; background: var(--med-accent, var(--med-blue)); color: var(--med-on-accent, #fff); vertical-align: 1px; }
 .pgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 12px 0; }
 .pgrid.p-2 { grid-template-columns: repeat(2, 1fr); } .pgrid.p-1 { grid-template-columns: 1fr; }
 .bar .s-hc, .sq.s-hc { background: var(--med-hc); } .bar .s-hp, .sq.s-hp { background: var(--med-hp); } .bar .s-base, .sq.s-base { background: var(--med-blue); }
@@ -1131,7 +1131,7 @@ ha-card.light .bar .s-white.s-HC, ha-card.light .sq.s-white.s-HC { background: #
 .pcol { display: flex; flex-direction: column; gap: 8px; }
 .pcol-h { font-size: .8rem; color: var(--med-muted); padding-left: 4px; }
 .pcell { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--med-line); cursor: pointer; display: flex; flex-direction: column; gap: 2px; }
-.pcell.cur { border-color: var(--med-blue); background: var(--med-surface); }
+.pcell.cur { border-color: var(--med-accent, var(--med-blue)); background: var(--med-surface); }
 .pcell.bad { border-color: #f0a33a; }
 .pcell-h { display: flex; align-items: center; gap: 6px; font-size: .78rem; color: var(--med-muted); }
 .pcell-v { font-size: 1.25rem; font-weight: 700; }
@@ -1149,18 +1149,18 @@ ha-card.light .t-white .dot { box-shadow: inset 0 0 0 1px #aab3c0; }
 .en-btns { display: flex; flex-wrap: wrap; gap: 8px; }
 .en-btn { all: unset; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; padding: 8px 12px; border-radius: 10px;
   border: 1px solid var(--med-line); background: var(--med-surface); font-size: .8rem; }
-.en-btn ha-icon { --mdc-icon-size: 18px; color: var(--med-blue); }
+.en-btn ha-icon { --mdc-icon-size: 18px; color: var(--med-accent, var(--med-blue)); }
 .en-btn.armed { border-color: #f0a33a; background: color-mix(in srgb, #f0a33a 18%, transparent); font-weight: 700; }
 .en-btn.armed ha-icon { color: #f0a33a; }
 .en-btn[disabled] { opacity: .6; cursor: default; }
-.en-btn:focus-visible { outline: 2px solid var(--med-blue); }
+.en-btn:focus-visible { outline: 2px solid var(--med-accent, var(--med-blue)); }
 .en-row.st-up ha-icon { color: var(--med-down); } .en-row.st-up b { color: var(--med-down); }
 .en-row.st-down ha-icon, .en-row.st-down b { color: var(--t-red); } .en-row.st-down { background: color-mix(in srgb, var(--t-red) 10%, transparent); }
 .en-row.st-unknown ha-icon, .en-row.st-unknown b { color: #f0a33a; }
 .pill.st-up .dot { background: var(--med-down); } .pill.st-down .dot { background: var(--t-red); } .pill.st-unknown .dot { background: #f0a33a; }
 .pill.st-down { border-color: var(--t-red); }
 .en-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin: 8px 16px 0; font-size: .74rem; color: var(--med-muted); }
-.en-foot a { color: var(--med-blue); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
+.en-foot a { color: var(--med-accent, var(--med-blue)); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
 .en-foot a ha-icon { --mdc-icon-size: 14px; }
 .en-alert code { font-size: .78rem; }
 </style>`;
@@ -1312,7 +1312,7 @@ header { display: flex; align-items: center; justify-content: space-between; gap
 .brand { display: flex; align-items: center; gap: 10px; }
 .brand svg { width: 34px; height: 34px; fill: none; }
 .brand .house { stroke: var(--med-green); stroke-width: 2.4; stroke-linejoin: round; stroke-linecap: round; }
-.brand .bolt { fill: var(--med-blue); }
+.brand .bolt { fill: var(--med-accent, var(--med-blue)); }
 .title { font-size: 1.15rem; font-weight: 700; letter-spacing: .2px; }
 .sub { font-size: .78rem; color: var(--med-muted); }
 .tempo { display: flex; gap: 8px; }
@@ -1373,7 +1373,7 @@ header { display: flex; align-items: center; justify-content: space-between; gap
 .day b { color: var(--med-text); font-size: .78rem; }
 .day .dot { width: 6px; height: 6px; margin-top: 2px; }
 .day.on { background: var(--med-surface); }
-.day:focus-visible { outline: 2px solid var(--med-blue); }
+.day:focus-visible { outline: 2px solid var(--med-accent, var(--med-blue)); }
 
 .detail { margin: 8px 12px 0; padding: 10px 12px; border-radius: 12px; background: var(--med-surface); border: 1px solid var(--med-line); }
 .detail-h { display: flex; align-items: center; gap: 8px; font-size: .8rem; color: var(--med-muted); }
@@ -1388,7 +1388,7 @@ header { display: flex; align-items: center; justify-content: space-between; gap
 .power.is-over { border-color: var(--t-red); }
 .power-t { display: flex; justify-content: space-between; font-size: .85rem; }
 .gauge { height: 6px; border-radius: 6px; background: var(--med-line); margin: 8px 0 6px; overflow: hidden; }
-.gauge i { display: block; height: 100%; background: linear-gradient(90deg, var(--med-green), var(--med-blue)); }
+.gauge i { display: block; height: 100%; background: linear-gradient(90deg, var(--med-green), var(--med-accent, var(--med-blue))); }
 .is-over .gauge i { background: var(--t-red); }
 .power-n { font-size: .75rem; color: var(--med-muted); }
 
@@ -1402,6 +1402,9 @@ footer { padding: 10px 18px 14px; font-size: .7rem; color: var(--med-muted); }
 .empty span { color: var(--med-muted); }
 /* Thème Home Assistant : fond, textes et bordures suivent le thème clair ou sombre */
 ha-card.th-ha {
+  /* accent (icônes, onglets, sélections, contours) : couleur principale du thème ; les bleus porteurs de sens restent bleus */
+  --med-accent: var(--primary-color, #1d93e3);
+  --med-on-accent: var(--text-primary-color, #fff);
   --med-bg: var(--ha-card-background, var(--card-background-color, #fff));
   --med-surface: color-mix(in srgb, var(--primary-text-color, #000) 5%, transparent);
   --med-line: var(--divider-color, rgba(127, 127, 127, .25));
