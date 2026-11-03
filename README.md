@@ -67,9 +67,10 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 
 ### Avec HACS (recommandé)
 
-1. Dans HACS, menu **⋮** → **Dépôts personnalisés**.
-2. Ajoutez `https://github.com/Marlboro62/linky-energie-cards` avec le type **Tableau de bord** (Dashboard).
-3. Cherchez **Cartes Linky Énergie**, installez, puis rechargez la page (Ctrl+F5).
+1. Dans HACS, cherchez **Cartes Linky Énergie** et installez-les.
+2. Rechargez la page (Ctrl+F5).
+
+Si la carte n'apparaît pas encore dans la recherche de HACS, ajoutez le dépôt à la main : menu **⋮** → **Dépôts personnalisés**, adresse `https://github.com/Marlboro62/linky-energie-cards`, type **Tableau de bord** (Dashboard), puis cherchez **Cartes Linky Énergie**.
 
 ### Manuellement
 
