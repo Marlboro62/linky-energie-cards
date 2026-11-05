@@ -29,6 +29,9 @@
 
 # Cartes Linky Énergie
 
+[![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz/)
+[![Release](https://img.shields.io/github/v/release/Marlboro62/linky-energie-cards)](https://github.com/Marlboro62/linky-energie-cards/releases)
+
 **Sept cartes Lovelace indépendantes, dans un seul fichier**, pour suivre l'énergie d'un contrat **EDF Tempo**, **heures creuses / heures pleines** ou **Base** dans Home Assistant, l'état des services Enedis et l'intensité carbone du réseau. Elles ont le style des cartes MyElectricalData new ([Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new)) : thème bleu nuit, version claire, ou thème Home Assistant.
 
 Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez avec son propre type. Elles ne remplacent aucune autre carte.
