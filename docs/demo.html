@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cartes Linky Énergie · démo</title>
-<meta name="description" content="Démonstration des six cartes Lovelace Cartes Linky Énergie (puissance, facture, postes Tempo, prix Tempo, contrôle du cycle, état des services Enedis) avec des données simulées.">
+<meta name="description" content="Démonstration des huit cartes Lovelace Cartes Linky Énergie (puissance, facture, postes Tempo, prix Tempo, contrôle du cycle, état des services Enedis, intensité carbone, EcoWatt) avec des données simulées.">
 <style>
   :root {
     --bg: #0f1724; --panel: #172133; --line: #2a3850; --text: #e7edf5; --muted: #8fa0b8;
@@ -96,7 +96,7 @@
       <h2>Carte</h2>
       <div class="ctl"><div class="seg" data-key="card">
         <button data-v="puissance">Puissance</button><button data-v="facture">Facture</button><button data-v="postes">Énergie par poste</button>
-        <button data-v="prix">Prix Tempo</button><button data-v="cycle">Contrôle du cycle</button><button data-v="enedis">Services Enedis</button><button data-v="carbone">Intensité carbone</button><button data-v="all">Les 7</button></div></div>
+        <button data-v="prix">Prix Tempo</button><button data-v="cycle">Contrôle du cycle</button><button data-v="enedis">Services Enedis</button><button data-v="carbone">Intensité carbone</button><button data-v="ecowatt">EcoWatt</button><button data-v="all">Les 8</button></div></div>
 
       <h2>Affichage</h2>
       <div class="ctl"><div class="ctl-l">Page</div><div class="seg" data-key="page">
@@ -126,6 +126,10 @@
         <button data-v="ok"><i class="sw green"></i>Cohérents</button><button data-v="gap"><i class="sw orange"></i>Écart avec le mois</button><button data-v="zero"><i class="sw red"></i>Baseline à 0</button></div></div>
       <div class="ctl" data-for="carbone all"><div class="ctl-l">Réseau électrique</div><div class="seg" data-key="co2">
         <button data-v="low"><i class="sw green"></i>Bas carbone</button><button data-v="mid"><i class="sw orange"></i>Moyen</button><button data-v="high"><i class="sw red"></i>Carboné</button></div></div>
+      <div class="ctl" data-for="ecowatt all"><div class="ctl-l">Signal EcoWatt</div><div class="seg" data-key="ecowatt">
+        <button data-v="ok"><i class="sw green"></i>Pas d'alerte</button><button data-v="tendu"><i class="sw orange"></i>Tendu demain</button><button data-v="critique"><i class="sw red"></i>Coupures possibles</button></div></div>
+      <div class="ctl" data-for="ecowatt"><div class="ctl-l">Tempo demain</div><div class="seg" data-key="tempo_j1">
+        <button data-v="BLUE"><i class="sw blue"></i>Bleu</button><button data-v="WHITE"><i class="sw white"></i>Blanc</button><button data-v="RED"><i class="sw red"></i>Rouge</button></div></div>
       <div class="ctl" data-for="enedis all"><div class="ctl-l">Services Enedis DataHub</div><div class="seg" data-key="enedis">
         <button data-v="up"><i class="sw green"></i>En service</button><button data-v="incident"><i class="sw red"></i>Incident</button><button data-v="unknown"><i class="sw orange"></i>Page illisible</button></div></div>
     </aside>
@@ -162,7 +166,7 @@
 
   const TYPES = {
     puissance: "linky-puissance-card", facture: "linky-facture-card", postes: "linky-tempo-postes-card",
-    prix: "linky-tempo-prix-card", cycle: "linky-cycle-card", enedis: "linky-enedis-status-card", carbone: "linky-carbone-card",
+    prix: "linky-tempo-prix-card", cycle: "linky-cycle-card", enedis: "linky-enedis-status-card", carbone: "linky-carbone-card", ecowatt: "linky-ecowatt-card",
   };
   const ENEDIS = ["authorize", "services_souscrits", "mesures", "donnees_generales", "alimentation",
     "situation_contractuelle", "synthese_contractuelle", "situation_comptage"];
@@ -176,7 +180,7 @@
   const BASE = { bleu_hc: 13958.9, bleu_hp: 11875.1, blanc_hc: 1900.8, blanc_hp: 1138.0, rouge_hc: 446.6, rouge_hp: 484.2 };
 
   const defaults = { card: "all", page: "dark", theme: "v2", width: "mobile", poste: "HP BLEU", load: "0.42", kva: "9",
-    budget: "none", period: "mois", prices: "ok", cycle: "ok", enedis: "up", contract: "tempo", co2: "low" };
+    budget: "none", period: "mois", prices: "ok", cycle: "ok", enedis: "up", contract: "tempo", co2: "low", ecowatt: "tendu", tempo_j1: "RED" };
   let state = { ...defaults };
   try { state = { ...defaults, ...JSON.parse(localStorage.getItem("linky-energie-demo") || "{}") }; } catch (e) { /* ignoré */ }
 
@@ -235,6 +239,21 @@
     const co2 = { low: [29, 3.1], mid: [180, 21.4], high: [420, 58.2] }[state.co2];
     st["sensor.electricity_maps_intensite_carbone"] = { state: String(co2[0]), attributes: { unit_of_measurement: "gCO2eq/kWh", country_code: "FR", friendly_name: "Intensité carbone" }, last_changed: "demo" };
     st["sensor.electricity_maps_pourcentage_d_energies_fossiles_du_reseau"] = { state: String(co2[1]), attributes: { unit_of_measurement: "%", country_code: "FR" }, last_changed: "demo" };
+    // EcoWatt (export MyElectricalData) : j0, j1, j2, 24 valeurs horaires fictives
+    const day = (n) => { const d = new Date(Date.now() + n * 86400e3); return d.toISOString().slice(0, 10); };
+    const LBL = ["Aujourd'hui", "Demain", "Après-demain"];
+    const hours = (n) => Array.from({ length: 24 }, (_, h) => {
+      if (state.ecowatt === "ok") return h < 6 ? 0 : 1;
+      if (state.ecowatt === "tendu") return n === 1 && ((h >= 8 && h < 13) || (h >= 18 && h < 20)) ? 2 : h < 6 ? 0 : 1;
+      return n === 0 && h >= 18 && h < 20 ? 2 : n === 1 && h >= 8 && h < 13 ? 3 : n === 1 && h >= 17 && h < 21 ? 2 : 1;
+    });
+    [0, 1, 2].forEach((n) => {
+      const v = hours(n), lvl = Math.max(1, ...v);
+      st[`sensor.myelectricaldata_ecowatt_j${n}`] = { state: String(lvl), attributes: { date: day(n), day_label: LBL[n], hourly_values: v,
+        message: lvl === 3 ? "Coupures possibles si la consommation ne baisse pas." : lvl === 2 ? "Système électrique tendu. Les écogestes sont les bienvenus." : "Pas d’alerte.",
+        friendly_name: `MyElectricalData RTE EcoWatt ${LBL[n]}` }, last_changed: "demo" };
+    });
+    st["sensor.myelectricaldata_tempo_tomorrow"] = S(state.tempo_j1, undefined, "MyElectricalData RTE Tempo Demain");
     const seen = new Date(Date.now() - 4 * 60e3).toISOString(); // incident ou page illisible : changement récent
     ENEDIS.forEach((k, i) => {
       const v = state.enedis === "unknown" ? "unavailable" : state.enedis === "incident" && [2, 3, 6].includes(i) ? "down" : "up";
@@ -255,6 +274,7 @@
       cycle: { type: "custom:linky-cycle-card", theme: t },
       enedis: { type: "custom:linky-enedis-status-card", theme: t },
       carbone: { type: "custom:linky-carbone-card", intensity: "sensor.electricity_maps_intensite_carbone", fossil: "sensor.electricity_maps_pourcentage_d_energies_fossiles_du_reseau", energy_today: "sensor.tempo_consommation_totale_aujourd_hui", theme: t },
+      ecowatt: { type: "custom:linky-ecowatt-card", theme: t },
     };
     return state.card === "all" ? Object.values(c) : [c[state.card]];
   }

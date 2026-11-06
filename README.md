@@ -32,11 +32,11 @@
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz/)
 [![Release](https://img.shields.io/github/v/release/Marlboro62/linky-energie-cards)](https://github.com/Marlboro62/linky-energie-cards/releases)
 
-**Sept cartes Lovelace indépendantes, dans un seul fichier**, pour suivre l'énergie d'un contrat **EDF Tempo**, **heures creuses / heures pleines** ou **Base** dans Home Assistant, l'état des services Enedis et l'intensité carbone du réseau. Elles ont le style des cartes MyElectricalData new ([Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new)) : thème bleu nuit, version claire, ou thème Home Assistant.
+**Huit cartes Lovelace indépendantes, dans un seul fichier**, pour suivre l'énergie d'un contrat **EDF Tempo**, **heures creuses / heures pleines** ou **Base** dans Home Assistant, l'état des services Enedis, l'intensité carbone du réseau et le signal EcoWatt de RTE. Elles ont le style des cartes MyElectricalData new ([Carte Enedis Linky New](https://github.com/Marlboro62/content-card-linky-new)) : thème bleu nuit, version claire, ou thème Home Assistant.
 
 Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez avec son propre type. Elles ne remplacent aucune autre carte.
 
-**[▶ Essayer la démo en ligne](https://marlboro62.github.io/linky-energie-cards/docs/demo.html)** : les 7 cartes avec des données simulées, thèmes clair et sombre, dépassement de puissance, écart de prix, compteurs incohérents, incident Enedis… et la configuration YAML à copier.
+**[▶ Essayer la démo en ligne](https://marlboro62.github.io/linky-energie-cards/docs/demo.html)** : les 8 cartes avec des données simulées, thèmes clair et sombre, dépassement de puissance, écart de prix, compteurs incohérents, incident Enedis, alerte EcoWatt… et la configuration YAML à copier.
 
 | Type | Carte |
 | --- | --- |
@@ -47,6 +47,7 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 | `custom:linky-cycle-card` | **Contrôle du cycle** : baselines des compteurs, automatisations et scripts de maintenance |
 | `custom:linky-carbone-card` | **Intensité carbone** : CO₂ par kWh du réseau en ce moment (Electricity Maps), part fossile, meilleur moment, courbe 24 h, CO₂ de la maison |
 | `custom:linky-enedis-status-card` | **État des services Enedis** : API Data Connect en service ou indisponibles, incident en cours |
+| `custom:linky-ecowatt-card` | **EcoWatt** : signal RTE sur 3 jours heure par heure, heures tendues à éviter, niveau en ce moment, croisé avec la couleur Tempo de demain |
 
 | Puissance | Facture | Énergie par poste |
 | --- | --- | --- |
@@ -63,6 +64,10 @@ Une seule ressource à installer, puis chaque carte s'ajoute où vous voulez ave
 | Intensité carbone | Réseau carboné | Intensité carbone (clair) |
 | --- | --- | --- |
 | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/carbone.png" alt="Intensité carbone" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/carbone-carbone.png" alt="Réseau carboné" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/carbone-clair.png" alt="Intensité carbone, clair" width="300"> |
+
+| EcoWatt (réseau tendu) | EcoWatt (coupures possibles) | EcoWatt (clair) |
+| --- | --- | --- |
+| <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/ecowatt.png" alt="EcoWatt, réseau tendu demain" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/ecowatt-critique.png" alt="EcoWatt, coupures possibles" width="300"> | <img src="https://raw.githubusercontent.com/Marlboro62/linky-energie-cards/main/images/ecowatt-clair.png" alt="EcoWatt, clair" width="300"> |
 
 *Aperçus réalisés avec des valeurs fictives.*
 
@@ -233,6 +238,29 @@ La carte lit l'intégration **Electricity Maps** (anciennement CO2 Signal) de Ho
 | `energy_today` | Consommation de la maison aujourd'hui (kWh) | — |
 | `hours` | Heures affichées dans la courbe (6 à 168) | `24` |
 
+### EcoWatt — `custom:linky-ecowatt-card`
+
+```yaml
+type: custom:linky-ecowatt-card
+```
+
+La carte lit les capteurs EcoWatt de l'export Home Assistant de **MyElectricalData** (`sensor.myelectricaldata_ecowatt_j0`, `_j1`, `_j2`), trouvés seuls :
+
+- **Maintenant** : niveau de l'heure en cours (décarboné, normal, tendu, critique) ;
+- **bandeau** : pas d'alerte sur les 3 jours, ou les heures tendues et critiques à venir, jour par jour, avec le conseil de décaler les gros appareils ;
+- **une ligne par jour** (aujourd'hui, demain, après-demain) : niveau du jour et 24 cases horaires en couleur, l'heure en cours encadrée, les heures passées estompées, le message de RTE quand le réseau est tendu ;
+- **Tempo demain** : la couleur Tempo du lendemain (`sensor.myelectricaldata_tempo_tomorrow`, trouvée seule), avec un conseil qui croise les deux signaux (jour Rouge et réseau tendu, par exemple).
+
+Couleurs : vert foncé, électricité décarbonée ; vert, pas d'alerte ; orange, réseau tendu ; rouge, coupures possibles. Un clic sur un jour ouvre son capteur.
+
+| Option | Rôle | Défaut |
+| --- | --- | --- |
+| `prefix` | Préfixe des capteurs EcoWatt (`sensor.myelectricaldata_ecowatt_`) | trouvé seul |
+| `show_tempo` | Croiser avec la couleur Tempo de demain | `true` |
+| `tempo` | Couleur Tempo de demain | trouvée seule |
+
+Les capteurs EcoWatt sont créés par l'add-on ou le client MyElectricalData (page Exporter, carte Home Assistant). RTE publie la prévision du lendemain en fin de journée et celle du surlendemain plus tard : en attendant, la ligne du jour l'indique.
+
 ### Contrôle du cycle — `custom:linky-cycle-card`
 
 | Option | Rôle | Défaut |
@@ -306,7 +334,7 @@ maintenu par [Marlboro62](https://github.com/Marlboro62).
 La licence MIT autorise à copier, modifier et redistribuer le code. Si vous publiez une version modifiée :
 
 - gardez les mentions de copyright du fichier [`LICENSE`](https://github.com/Marlboro62/linky-energie-cards/blob/main/LICENSE) (© Marlboro62) ;
-- **donnez-lui un autre nom** et d'autres types de carte (`custom:linky-puissance-card`, `custom:linky-facture-card`, `custom:linky-tempo-postes-card`, `custom:linky-tempo-prix-card`, `custom:linky-cycle-card`, `custom:linky-enedis-status-card`… sont ceux de ce dépôt) :
+- **donnez-lui un autre nom** et d'autres types de carte (`custom:linky-puissance-card`, `custom:linky-facture-card`, `custom:linky-tempo-postes-card`, `custom:linky-tempo-prix-card`, `custom:linky-cycle-card`, `custom:linky-enedis-status-card`, `custom:linky-carbone-card`, `custom:linky-ecowatt-card`… sont ceux de ce dépôt) :
   Home Assistant ne peut pas charger deux cartes du même type, et personne ne doit confondre les deux versions dans HACS ;
 - ne la présentez pas comme la version officielle et n'orientez pas vers ce dépôt les demandes
   de support qui concernent votre version.

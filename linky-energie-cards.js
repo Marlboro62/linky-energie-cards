@@ -1,5 +1,5 @@
 /*
- * Cartes Linky Énergie — cinq cartes indépendantes dans un seul fichier, pour Home Assistant,
+ * Cartes Linky Énergie — huit cartes indépendantes dans un seul fichier, pour Home Assistant,
  * au style des cartes MyElectricalData new (Carte Enedis Linky New) :
  *
  *   custom:linky-puissance-card     puissance en direct sur la puissance souscrite
@@ -8,12 +8,14 @@
  *   custom:linky-tempo-prix-card    prix Tempo et vérification de leur source
  *   custom:linky-cycle-card         contrôle des compteurs du cycle et scripts de maintenance
  *   custom:linky-enedis-status-card état des services Enedis DataHub (Data Connect)
+ *   custom:linky-carbone-card       intensité carbone de l'électricité du réseau
+ *   custom:linky-ecowatt-card       signal EcoWatt de RTE sur 3 jours, heure par heure
  *
  * Une seule ressource à ajouter ; chaque carte s'utilise seule. Aucune ne remplace une autre carte.
  */
 
 (() => {
-const CARD_VERSION = "0.4.1";
+const CARD_VERSION = "0.5.0-beta";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -1163,6 +1165,27 @@ ha-card.light .t-white .dot { box-shadow: inset 0 0 0 1px #aab3c0; }
 .en-foot a { color: var(--med-accent, var(--med-blue)); text-decoration: none; display: inline-flex; align-items: center; gap: 4px; }
 .en-foot a ha-icon { --mdc-icon-size: 14px; }
 .en-alert code { font-size: .78rem; }
+.w-0 { --ecw: #2fbf71; } .w-1 { --ecw: #5fcf8a; } .w-2 { --ecw: #f0a33a; } .w-3 { --ecw: #ee4a4a; } .w-n { --ecw: var(--med-line); }
+.pill.w-0 .dot, .pill.w-1 .dot, .pill.w-2 .dot, .pill.w-3 .dot { background: var(--ecw); }
+.pill.w-2, .pill.w-3 { border-color: var(--ecw); }
+.ecw-days { display: flex; flex-direction: column; gap: 8px; margin: 10px 12px 0; }
+.ecw-day { padding: 10px 12px; border-radius: 12px; border: 1px solid var(--med-line); cursor: pointer; }
+.ecw-day-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: .84rem; margin-bottom: 8px; }
+.ecw-day-h small { color: var(--med-muted); font-size: .74rem; margin-left: 4px; }
+.ecw-tag { padding: 1px 9px; border-radius: 999px; font-size: .72rem; font-weight: 700; background: var(--ecw); color: #0f1724; }
+.ecw-tag.w-n { color: var(--med-muted); background: var(--med-surface); border: 1px solid var(--med-line); }
+.ecw-tag.w-3 { color: #fff; }
+.ecw-strip { display: grid; grid-template-columns: repeat(24, 1fr); gap: 2px; }
+.ecw-strip i { height: 14px; border-radius: 3px; background: var(--ecw); }
+.ecw-strip i.past { opacity: .35; }
+.ecw-strip i.cur { outline: 2px solid var(--med-text); outline-offset: 1px; }
+.ecw-none { grid-column: 1 / -1; font-size: .78rem; color: var(--med-muted); }
+.ecw-msg { font-size: .76rem; color: var(--med-muted); margin-top: 6px; }
+.ecw-ax { display: flex; justify-content: space-between; font-size: .68rem; color: var(--med-muted); margin: 4px 22px 0; }
+.en-alert.ecw-alert { background: color-mix(in srgb, var(--ecw) 14%, transparent); border-color: var(--ecw); }
+.en-alert.ecw-alert ha-icon { color: var(--ecw); }
+.eco.t-blue .dot { background: var(--t-blue); } .eco.t-white .dot { background: var(--t-white); } .eco.t-red .dot { background: var(--t-red); }
+.eco[data-entity] { cursor: pointer; }
 </style>`;
 
 /* ------------------------------------------------------- 7. intensité carbone */
@@ -1292,6 +1315,143 @@ class LinkyCarboneCard extends EnergyBase {
       ${chart}
       <footer>Données Electricity Maps, mesures passées (pas de prévision). Plus c'est vert, plus l'électricité du réseau est bas carbone.</footer>`;
     return { sub: lvl ? `Carbone : ${lvl[1].toLowerCase()}` : "Réseau électrique", body };
+  }
+}
+
+/* ------------------------------------------------------------- 8. EcoWatt */
+
+/** Niveaux EcoWatt de RTE : 0 = vert et production décarbonée, 1 = vert, 2 = orange (tendu), 3 = rouge (coupures possibles). */
+const ECOWATT = {
+  0: { label: "Décarboné", cls: "w-0", txt: "Pas d'alerte, électricité très bas carbone" },
+  1: { label: "Normal", cls: "w-1", txt: "Pas d'alerte" },
+  2: { label: "Tendu", cls: "w-2", txt: "Système électrique tendu : réduisez votre consommation" },
+  3: { label: "Critique", cls: "w-3", txt: "Coupures possibles : réduisez fortement votre consommation" },
+};
+const ecoLevel = (v) => {
+  const n = Number(v);
+  return v !== null && v !== undefined && v !== "" && Number.isInteger(n) && ECOWATT[n] ? n : null;
+};
+/** Plages d'heures consécutives au niveau minimal donné : [[8, 13], [18, 20]] = 08 h–13 h, 18 h–20 h. */
+const ecoRanges = (vals, min) => {
+  const out = [];
+  vals.forEach((v, h) => {
+    const on = ecoLevel(v) !== null && ecoLevel(v) >= min;
+    if (on && out.length && out[out.length - 1][1] === h) out[out.length - 1][1] = h + 1;
+    else if (on) out.push([h, h + 1]);
+  });
+  return out;
+};
+const hRange = ([a, b]) => `${String(a).padStart(2, "0")} h–${String(b).padStart(2, "0")} h`;
+const TEMPO_TXT = { BLUE: "blue", BLEU: "blue", WHITE: "white", BLANC: "white", RED: "red", ROUGE: "red" };
+
+class LinkyEcowattCard extends EnergyBase {
+  static DEFAULTS = {
+    title: "EcoWatt",
+    prefix: "", // vide = sensor.<préfixe>_ecowatt_j0 / j1 / j2 de l'export MyElectricalData, trouvés seuls
+    tempo: "", // couleur Tempo du lendemain (vide = sensor.<préfixe>_tempo_tomorrow, trouvé seul)
+    show_tempo: true,
+    theme: "v2",
+  };
+
+  static getConfigElement() {
+    return document.createElement("linky-ecowatt-card-editor");
+  }
+
+  getCardSize() {
+    return 6;
+  }
+
+  /** Capteurs j0, j1, j2 : préfixe de la configuration, sinon le premier sensor.*_ecowatt_j0 trouvé. */
+  _days() {
+    const c = this._config;
+    let p = c.prefix ? String(c.prefix).replace(/(j[0-2])?$/, "") : "";
+    if (p && !p.startsWith("sensor.")) p = `sensor.${p}`;
+    if (!p || !this._st(`${p}j0`)) {
+      const id = Object.keys(this._hass?.states || {}).find((x) => /^sensor\..*_?ecowatt_j0$/.test(x));
+      p = id ? id.slice(0, -2) : p;
+    }
+    return ["j0", "j1", "j2"].map((d) => `${p}${d}`).filter((id) => this._st(id));
+  }
+
+  _tempoId() {
+    const c = this._config;
+    if (c.tempo) return c.tempo;
+    return Object.keys(this._hass?.states || {}).find((x) => /^sensor\.myelectricaldata.*_tempo_tomorrow$/.test(x)) || null;
+  }
+
+  _watch() {
+    return [...this._days(), this._config.show_tempo ? this._tempoId() : null].filter(Boolean);
+  }
+
+  _extraSig() {
+    return new Date().getHours();
+  }
+
+  _content() {
+    const c = this._config;
+    const ids = this._days();
+    if (!ids.length) {
+      return { body: `<div class="empty">Capteurs EcoWatt introuvables<span>Activez l'export Home Assistant de MyElectricalData (capteurs sensor.myelectricaldata_ecowatt_j0, j1 et j2), ou indiquez leur préfixe dans l'éditeur.</span></div>` };
+    }
+    const now = new Date().getHours();
+    const days = ids.map((id) => {
+      const st = this._st(id);
+      const a = st.attributes || {};
+      const vals = Array.isArray(a.hourly_values) ? a.hourly_values.slice(0, 24) : [];
+      const date = a.date ? new Date(`${a.date}T12:00:00`) : null;
+      return { id, a, lvl: ecoLevel(st.state), vals, date, today: /_j0$/.test(id) };
+    });
+    const j0 = days.find((d) => d.today);
+    const nowLvl = j0 ? ecoLevel(j0.vals[now] ?? j0.a.current_hour_value ?? j0.lvl) : null;
+    const worst = days.reduce((m, d) => Math.max(m, d.lvl ?? 0, ...d.vals.map((v) => ecoLevel(v) ?? 0)), 0);
+
+    // bandeau : alerte des jours tendus ou critiques, sinon tout va bien
+    const alerts = days
+      .map((d) => ({ d, r: ecoRanges(d.today ? d.vals.map((v, h) => (h < now ? null : v)) : d.vals, 2) }))
+      .filter((x) => x.r.length);
+    const dayName = (d) => (d.a.day_label || (d.date ? cap(d.date.toLocaleDateString("fr-FR", { weekday: "long" })) : "")).toLowerCase();
+    const banner = alerts.length
+      ? `<div class="en-alert ecw-alert ${worst >= 3 ? "w-3" : "w-2"}"><ha-icon icon="${worst >= 3 ? "mdi:alert-octagon" : "mdi:alert"}"></ha-icon><span>${worst >= 3 ? "Coupures possibles" : "Réseau tendu"} : ${alerts.map((x) => `${dayName(x.d)} ${x.r.map(hRange).join(", ")}`).join(" ; ")}. Décalez les gros appareils (lave-linge, recharge, chauffe-eau) hors de ces heures.</span></div>`
+      : `<div class="en-ok"><ha-icon icon="mdi:check-circle"></ha-icon><span>Pas d'alerte EcoWatt sur les ${days.length} jours affichés.</span></div>`;
+
+    // une ligne par jour : niveau du jour et 24 cases horaires
+    const rows = days.map((d) => {
+      const L = d.lvl !== null ? ECOWATT[d.lvl] : null;
+      const when = d.date ? d.date.toLocaleDateString("fr-FR", { weekday: "short", day: "numeric", month: "short" }) : "";
+      const cells = d.vals.length
+        ? d.vals.map((v, h) => {
+          const l = ecoLevel(v);
+          return `<i class="${l !== null ? ECOWATT[l].cls : "w-n"}${d.today && h < now ? " past" : ""}${d.today && h === now ? " cur" : ""}" title="${String(h).padStart(2, "0")} h : ${l !== null ? ECOWATT[l].label : "pas de valeur"}"></i>`;
+        }).join("")
+        : `<span class="ecw-none">${esc(d.a.message || "Prévision pas encore publiée par RTE")}</span>`;
+      return `<div class="ecw-day" data-entity="${esc(d.id)}">
+        <div class="ecw-day-h"><span><b>${esc(d.a.day_label || when)}</b>${d.a.day_label && when ? ` <small>${esc(when)}</small>` : ""}</span>
+          ${L ? `<span class="ecw-tag ${L.cls}">${L.label}</span>` : `<span class="ecw-tag w-n">Inconnu</span>`}</div>
+        <div class="ecw-strip">${cells}</div>
+        ${d.vals.length && d.a.message && d.lvl !== null && d.lvl >= 2 ? `<div class="ecw-msg">${esc(d.a.message)}</div>` : ""}
+      </div>`;
+    }).join("");
+    const axis = `<div class="ecw-ax"><span>0 h</span><span>6 h</span><span>12 h</span><span>18 h</span><span>24 h</span></div>`;
+
+    // couleur Tempo du lendemain, pour croiser les deux signaux
+    let tempo = "";
+    const tid = c.show_tempo ? this._tempoId() : null;
+    const tcol = tid ? TEMPO_TXT[String(this._st(tid)?.state || "").toUpperCase()] : null;
+    if (tcol) {
+      const j1 = days.find((d) => /_j1$/.test(d.id));
+      const tense = j1 && ecoRanges(j1.vals, 2).length;
+      const tip = tcol === "red"
+        ? (tense ? "jour Rouge et réseau tendu : le kWh est au plus cher, consommez le moins possible en heures pleines." : "jour Rouge : décalez ce qui peut l'être en heures creuses (22 h–6 h).")
+        : tcol === "white" ? "jour Blanc : prix intermédiaire, privilégiez les heures creuses." : "jour Bleu : le kWh est au moins cher.";
+      tempo = `<div class="eco e-${tcol === "red" ? "alert" : tcol === "white" ? "warn" : "ok"} ${TEMPO[tcol].cls}" data-entity="${esc(tid)}"><span class="dot"></span><span><span class="eco-l">Tempo demain :</span> ${tip}</span></div>`;
+    }
+
+    const right = nowLvl !== null
+      ? `<div class="pill ${ECOWATT[nowLvl].cls}" data-entity="${esc(j0.id)}"><span class="dot"></span><span class="pill-l">Maintenant</span><span class="pill-v">${ECOWATT[nowLvl].label}</span></div>`
+      : "";
+    const body = `${banner}<div class="ecw-days">${rows}</div>${axis}${tempo}
+      <footer>Signal EcoWatt de RTE, via MyElectricalData. Vert foncé : électricité décarbonée ; vert : pas d'alerte ; orange : réseau tendu ; rouge : coupures possibles. Les heures passées sont estompées.</footer>`;
+    return { sub: nowLvl !== null ? ECOWATT[nowLvl].txt : "Signal du réseau électrique", right, body, cls: worst >= 3 ? "en-over" : "" };
   }
 }
 
@@ -1644,6 +1804,15 @@ const LINKYENEDISSTATUSCARD_SCHEMA = [
 ];
 const LinkyEnedisStatusCardEditor = makeEditor(LINKYENEDISSTATUSCARD_SCHEMA, { title: "Titre", prefix: "Préfixe des capteurs Scrape (ex. sensor.enedis_datahub_)", show_roles: "Afficher le rôle de chaque service", show_link: "Lien vers la page Enedis DataHub", theme: "Couleurs de la carte" }, LinkyEnedisStatusCard.DEFAULTS);
 
+const LINKYECOWATTCARD_SCHEMA = [
+  { name: "title", selector: { text: {} } },
+  { name: "prefix", selector: { text: {} } },
+  { name: "show_tempo", selector: { boolean: {} } },
+  { name: "tempo", selector: { entity: { domain: "sensor" } } },
+  THEME_SELECT,
+];
+const LinkyEcowattCardEditor = makeEditor(LINKYECOWATTCARD_SCHEMA, { title: "Titre", prefix: "Préfixe des capteurs EcoWatt (vide = sensor.myelectricaldata_ecowatt_, trouvé seul)", show_tempo: "Croiser avec la couleur Tempo de demain", tempo: "Couleur Tempo de demain (vide = trouvée seule)", theme: "Couleurs de la carte" }, LinkyEcowattCard.DEFAULTS);
+
 /* ---------------------------------------------------------- enregistrement */
 
 if (typeof customElements !== "undefined") {
@@ -1673,6 +1842,9 @@ if (typeof customElements !== "undefined") {
   card("linky-carbone-card", "Carte Intensité carbone", "Intensité carbone et part fossile de l'électricité du réseau (Electricity Maps), meilleur moment, courbe et CO₂ de la maison.");
   define("linky-enedis-status-card-editor", LinkyEnedisStatusCardEditor);
   card("linky-enedis-status-card", "Carte État des services Enedis", "État des API Enedis DataHub (Data Connect) : incident en cours, service par service, heure du dernier changement, lien vers la page officielle.");
+  define("linky-ecowatt-card", LinkyEcowattCard);
+  define("linky-ecowatt-card-editor", LinkyEcowattCardEditor);
+  card("linky-ecowatt-card", "Carte EcoWatt", "Signal EcoWatt de RTE sur 3 jours, heure par heure : heures tendues à éviter, niveau en ce moment, croisé avec la couleur Tempo de demain.");
   console.info(`%c LINKY-ENERGIE-CARDS %c ${CARD_VERSION} `, "background:#96d21f;color:#1a2434;font-weight:700", "background:#1d93e3;color:#fff");
 }
 })();

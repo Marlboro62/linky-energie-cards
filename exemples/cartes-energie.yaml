@@ -22,3 +22,5 @@ cards:
     automations:
       - automation.tempo_alerte_baselines_perdues
       - automation.tempo_nouveau_cycle_de_facturation_1er_octobre
+
+  - type: custom:linky-ecowatt-card
