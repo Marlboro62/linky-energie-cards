@@ -15,7 +15,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.5.0-beta";
+const CARD_VERSION = "0.5.1-beta";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -1444,6 +1444,9 @@ class LinkyEcowattCard extends EnergyBase {
         ? (tense ? "jour Rouge et réseau tendu : le kWh est au plus cher, consommez le moins possible en heures pleines." : "jour Rouge : décalez ce qui peut l'être en heures creuses (22 h–6 h).")
         : tcol === "white" ? "jour Blanc : prix intermédiaire, privilégiez les heures creuses." : "jour Bleu : le kWh est au moins cher.";
       tempo = `<div class="eco e-${tcol === "red" ? "alert" : tcol === "white" ? "warn" : "ok"} ${TEMPO[tcol].cls}" data-entity="${esc(tid)}"><span class="dot"></span><span><span class="eco-l">Tempo demain :</span> ${tip}</span></div>`;
+    } else if (tid && this._st(tid)) {
+      // couleur pas encore publiée (« unknown », « Inconnu ») : RTE l'annonce vers 11 h
+      tempo = `<div class="eco" data-entity="${esc(tid)}"><span class="dot"></span><span><span class="eco-l">Tempo demain :</span> couleur pas encore connue, RTE la publie vers 11 h.</span></div>`;
     }
 
     const right = nowLvl !== null
