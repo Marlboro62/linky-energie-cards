@@ -15,7 +15,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.5.1";
+const CARD_VERSION = "0.5.2-beta.1";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -181,7 +181,7 @@ class EnergyBase extends HTMLElement {
   _render(force) {
     if (!this._config || !this._hass || !this.shadowRoot) return;
     const c = this._config;
-    const ids = [...this._watch(), c.tarif ? this._tarif(c.tarif) : null];
+    const ids = [...this._watch(), c.tarif ? this._tarif(c.tarif) : null, ...this._posteDayIds()];
     const sig = `${c.theme}|${this._hass.themes?.darkMode}|${this._tab}|${this._armed}|${this._extraSig?.() ?? ""}|` +
       ids.map((id) => { const s = this._st(id); return s ? `${s.state}@${s.last_changed}` : "-"; }).join("|");
     if (!force && sig === this._sig) return;
@@ -201,16 +201,40 @@ class EnergyBase extends HTMLElement {
     return ids.find((x) => /^sensor\..*(_ptec|_ltarf|periode_tarifaire(_en_cours)?|tarif_en_cours|current_tarif|current_price)$/.test(x)) || id;
   }
 
+  /** Capteurs « énergie aujourd'hui » de chaque poste Tempo (préfixe et suffixe de la carte, sinon ceux par défaut). */
+  _posteDayIds() {
+    const c = this._config || {};
+    const pre = c.prefix || "sensor.tempo_", suf = c.suffix_day || "_energie_aujourdhui";
+    return POSTES.map((p) => `${pre}${p.k}${suf}`);
+  }
+
+  /** Poste Tempo en cours. Le capteur de période fait foi (LTARF « HP BLEU »), sauf s'il semble figé : le ZLinky
+   *  peut laisser LTARF bloqué (par exemple « HP BLEU » toute la nuit). Il est jugé figé quand le compteur
+   *  « énergie aujourd'hui » de son poste n'a pas bougé depuis 20 minutes alors que celui d'un autre poste tourne. */
+  _posteNow(tarifId) {
+    const said = currentPoste(this._st(tarifId)?.state);
+    const ids = this._posteDayIds();
+    const changed = (k) => Date.parse(this._st(ids[POSTES.findIndex((p) => p.k === k)])?.last_changed || "") || 0;
+    const now = Date.now(), FRESH = 20 * 60000;
+    const recent = POSTES.map((p) => ({ k: p.k, t: changed(p.k) })).filter((x) => x.t).sort((a, b) => b.t - a.t);
+    // un seul poste en tête (pas d'égalité, par exemple à la remise à zéro de minuit) et qui a bougé récemment
+    const moving = recent.length > 1 && recent[0].t > recent[1].t && now - recent[0].t < FRESH ? recent[0].k : null;
+    if (moving && (!said || (moving !== said && now - changed(said) > FRESH))) return { k: moving, stale: said };
+    return said ? { k: said } : null;
+  }
+
   /** Pastille « poste en cours » : poste Tempo (« HP BLEU »), sinon HC ou HP (PTEC « HC.. »). */
   _postePill(tarifId) {
     tarifId = this._tarif(tarifId);
-    const p = currentPoste(this._st(tarifId)?.state);
+    const now = this._posteNow(tarifId);
+    const p = now?.k;
     if (!p) {
       const hp = currentHcHp(this._st(tarifId)?.state);
       return hp ? `<div class="pill" data-entity="${esc(tarifId)}"><span class="dot ${hp === "hc" ? "d-hc" : "d-hp"}"></span><span class="pill-l">En cours</span><span class="pill-v">${hp.toUpperCase()}</span></div>` : "";
     }
     const P = POSTES.find((x) => x.k === p);
-    return `<div class="pill ${TEMPO[P.c].cls}" data-entity="${esc(tarifId)}"><span class="dot"></span><span class="pill-l">En cours</span><span class="pill-v">${P.h} ${TEMPO[P.c].label}</span></div>`;
+    const note = now.stale ? ` title="D'après les compteurs d'énergie du jour (le capteur de période indique ${esc(this._st(tarifId)?.state)})"` : "";
+    return `<div class="pill ${TEMPO[P.c].cls}" data-entity="${esc(tarifId)}"${note}><span class="dot"></span><span class="pill-l">En cours</span><span class="pill-v">${P.h} ${TEMPO[P.c].label}</span></div>`;
   }
 
   _tabs(list) {
@@ -715,7 +739,7 @@ class LinkyTempoPostesCard extends EnergyBase {
     const c = this._config;
     if (CONTRACTS[c.contract]) return this._contentSimple();
     const per = PERIODS.find((p) => p.key === this._tab) || PERIODS[1];
-    const cur = currentPoste(this._st(c.tarif)?.state);
+    const cur = this._posteNow(this._tarif(c.tarif))?.k || null;
     const rows = POSTES.map((p) => {
       const id = `${c.prefix}${p.k}${c[per.cfg]}`;
       const kwh = this._num(id);
@@ -806,7 +830,7 @@ class LinkyTempoPrixCard extends EnergyBase {
   _content() {
     const c = this._config;
     if (CONTRACTS[c.contract]) return this._contentSimple();
-    const cur = currentPoste(this._st(c.tarif)?.state);
+    const cur = this._posteNow(this._tarif(c.tarif))?.k || null;
     const same = (a, b) => a !== null && b !== null && Math.abs(a - b) < 0.00005;
     let issues = 0;
     // prix affiché : capteur des prix utilisés s'il existe, sinon MyElectricalData, sinon la valeur de secours
