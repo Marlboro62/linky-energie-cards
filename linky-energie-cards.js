@@ -15,7 +15,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.5.2";
+const CARD_VERSION = "0.5.3-beta.1";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -210,7 +210,9 @@ class EnergyBase extends HTMLElement {
 
   /** Poste Tempo en cours. Le capteur de période fait foi (LTARF « HP BLEU »), sauf s'il semble figé : le ZLinky
    *  peut laisser LTARF bloqué (par exemple « HP BLEU » toute la nuit). Il est jugé figé quand le compteur
-   *  « énergie aujourd'hui » de son poste n'a pas bougé depuis 20 minutes alors que celui d'un autre poste tourne. */
+   *  « énergie aujourd'hui » de son poste n'a pas bougé depuis 20 minutes alors que celui d'un autre poste tourne.
+   *  Une heure de changement partagée par plusieurs compteurs (redémarrage de Home Assistant, remise à zéro de
+   *  minuit) n'est pas un vrai changement : un poste resté à cette heure-là n'a pas bougé depuis. */
   _posteNow(tarifId) {
     const said = currentPoste(this._st(tarifId)?.state);
     const ids = this._posteDayIds();
@@ -219,7 +221,10 @@ class EnergyBase extends HTMLElement {
     const recent = POSTES.map((p) => ({ k: p.k, t: changed(p.k) })).filter((x) => x.t).sort((a, b) => b.t - a.t);
     // un seul poste en tête (pas d'égalité, par exemple à la remise à zéro de minuit) et qui a bougé récemment
     const moving = recent.length > 1 && recent[0].t > recent[1].t && now - recent[0].t < FRESH ? recent[0].k : null;
-    if (moving && (!said || (moving !== said && now - changed(said) > FRESH))) return { k: moving, stale: said };
+    // heure « de groupe » : au moins deux autres postes ont changé à la même seconde
+    const batch = (k) => { const t = changed(k); return t > 0 && POSTES.filter((p) => p.k !== k && Math.abs(changed(p.k) - t) < 5000).length >= 2; };
+    const idle = (k) => now - changed(k) > FRESH || (batch(k) && changed(moving) > changed(k));
+    if (moving && (!said || (moving !== said && idle(said)))) return { k: moving, stale: said };
     return said ? { k: said } : null;
   }
 
