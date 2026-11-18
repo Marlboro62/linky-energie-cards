@@ -15,7 +15,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.5.3-beta.1";
+const CARD_VERSION = "0.5.3-beta.2";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -212,13 +212,16 @@ class EnergyBase extends HTMLElement {
    *  peut laisser LTARF bloqué (par exemple « HP BLEU » toute la nuit). Il est jugé figé quand le compteur
    *  « énergie aujourd'hui » de son poste n'a pas bougé depuis 20 minutes alors que celui d'un autre poste tourne.
    *  Une heure de changement partagée par plusieurs compteurs (redémarrage de Home Assistant, remise à zéro de
-   *  minuit) n'est pas un vrai changement : un poste resté à cette heure-là n'a pas bougé depuis. */
+   *  minuit) n'est pas un vrai changement : un poste resté à cette heure-là n'a pas bougé depuis. Un compteur à
+   *  zéro (ou sans valeur) ne compte pas comme un poste qui tourne : il peut changer d'heure sans consommation,
+   *  par exemple quand Home Assistant le recrée au démarrage. */
   _posteNow(tarifId) {
     const said = currentPoste(this._st(tarifId)?.state);
     const ids = this._posteDayIds();
     const changed = (k) => Date.parse(this._st(ids[POSTES.findIndex((p) => p.k === k)])?.last_changed || "") || 0;
     const now = Date.now(), FRESH = 20 * 60000;
-    const recent = POSTES.map((p) => ({ k: p.k, t: changed(p.k) })).filter((x) => x.t).sort((a, b) => b.t - a.t);
+    const kwh = (k) => Number(this._st(ids[POSTES.findIndex((p) => p.k === k)])?.state);
+    const recent = POSTES.map((p) => ({ k: p.k, t: changed(p.k) })).filter((x) => x.t && kwh(x.k) > 0).sort((a, b) => b.t - a.t);
     // un seul poste en tête (pas d'égalité, par exemple à la remise à zéro de minuit) et qui a bougé récemment
     const moving = recent.length > 1 && recent[0].t > recent[1].t && now - recent[0].t < FRESH ? recent[0].k : null;
     // heure « de groupe » : au moins deux autres postes ont changé à la même seconde
