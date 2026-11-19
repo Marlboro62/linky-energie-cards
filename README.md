@@ -29,6 +29,8 @@
 
 # Cartes Linky Énergie
 
+<img src="images/icon.png" alt="Icône Cartes Linky Énergie" width="128" align="right">
+
 [![HACS Default](https://img.shields.io/badge/HACS-Default-41BDF5.svg)](https://hacs.xyz/)
 [![Release](https://img.shields.io/github/v/release/Marlboro62/linky-energie-cards)](https://github.com/Marlboro62/linky-energie-cards/releases)
 
