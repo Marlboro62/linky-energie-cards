@@ -15,7 +15,7 @@
  */
 
 (() => {
-const CARD_VERSION = "0.5.3";
+const CARD_VERSION = "0.5.4-beta.1";
 
 /* ------------------------------------------------------------- utilitaires */
 
@@ -222,10 +222,13 @@ class EnergyBase extends HTMLElement {
     const now = Date.now(), FRESH = 20 * 60000;
     const kwh = (k) => Number(this._st(ids[POSTES.findIndex((p) => p.k === k)])?.state);
     const recent = POSTES.map((p) => ({ k: p.k, t: changed(p.k) })).filter((x) => x.t && kwh(x.k) > 0).sort((a, b) => b.t - a.t);
-    // un seul poste en tête (pas d'égalité, par exemple à la remise à zéro de minuit) et qui a bougé récemment
-    const moving = recent.length > 1 && recent[0].t > recent[1].t && now - recent[0].t < FRESH ? recent[0].k : null;
     // heure « de groupe » : au moins deux autres postes ont changé à la même seconde
     const batch = (k) => { const t = changed(k); return t > 0 && POSTES.filter((p) => p.k !== k && Math.abs(changed(p.k) - t) < 5000).length >= 2; };
+    // un seul poste en tête (pas d'égalité, par exemple à la remise à zéro de minuit) et qui a bougé récemment.
+    // Après minuit, il est souvent le seul compteur du jour au-dessus de zéro : il suffit alors qu'il ait
+    // vraiment bougé (pas seulement changé d'heure avec les autres, au redémarrage de Home Assistant)
+    const lead = recent[0];
+    const moving = lead && now - lead.t < FRESH && (recent.length > 1 ? lead.t > recent[1].t : !batch(lead.k)) ? lead.k : null;
     const idle = (k) => now - changed(k) > FRESH || (batch(k) && changed(moving) > changed(k));
     if (moving && (!said || (moving !== said && idle(said)))) return { k: moving, stale: said };
     return said ? { k: said } : null;
